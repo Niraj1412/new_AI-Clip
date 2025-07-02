@@ -54,7 +54,7 @@ const corsOptions = {
     const allowedOrigins = process.env.ALLOWED_ORIGINS 
       ? process.env.ALLOWED_ORIGINS.split(',') 
       : [
-          'https://clip-frontend-niraj1412s-projects.vercel.app',
+          'https://clip-frontend-git-main-niraj1412s-projects.vercel.app',
           'https://clip-frontend-three.vercel.app',
           'http://localhost:3000', 
           'http://127.0.0.1:3000'
