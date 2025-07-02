@@ -7,7 +7,7 @@ const Transcript = require('../../model/Transcript'); // Import the Transcript m
 dotenv.config();
 
 const PYTHON_API = process.env.PYTHON_API || 'https://ai-py-backend.onrender.com';
-const APPLICATION_URL = process.env.APPLICATION_URL || 'https://ai-clip-backend1-1.onrender.com';
+const APPLICATION_URL = process.env.APPLICATION_URL || 'https://new-ai-clip-1.onrender.com';
 
 // Configure global settings for Google APIs
 google.options({
@@ -70,10 +70,11 @@ async function fetchFromPythonAPI(videoId) {
 const getTranscript = async (req, res) => {
     try {
         const { videoId } = req.params;
-        console.log("---->", videoId);
+        console.log(`[getTranscript] Processing videoId: ${videoId}`);
 
         // Validate input
         if (!videoId) {
+            console.error(`[getTranscript] Error: Video ID is required`);
             return res.status(400).json({
                 message: "Video ID is required",
                 status: false
@@ -81,6 +82,7 @@ const getTranscript = async (req, res) => {
         }
 
         if (!process.env.YOUTUBE_API_KEY) {
+            console.error(`[getTranscript] Error: YouTube API key is missing`);
             return res.status(500).json({
                 message: "Server configuration error: YouTube API key is missing",
                 status: false
@@ -94,6 +96,7 @@ const getTranscript = async (req, res) => {
         }).sort({ fetchedAt: -1 });
 
         if (cached) {
+            console.log(`[getTranscript] Found cached result for videoId: ${videoId}, status: ${cached.status}`);
             if (cached.status === 'rate_limited') {
                 return res.status(429).json({
                     message: "Too many requests. Please try again later.",
@@ -126,14 +129,15 @@ const getTranscript = async (req, res) => {
                 id: videoId
             });
             if (!videoResponse.data.items?.length) {
+                console.error(`[getTranscript] Video not found or inaccessible: ${videoId}`);
                 return res.status(404).json({
                     message: "Video not found or is not accessible",
                     status: false
                 });
             }
-            console.log(`Video found: ${videoResponse.data.items[0].snippet.title}`);
+            console.log(`[getTranscript] Video found: ${videoResponse.data.items[0].snippet.title}`);
         } catch (error) {
-            console.error("Error checking video existence:", error.message);
+            console.error(`[getTranscript] Error checking video existence for ${videoId}: ${error.message}`);
             return res.status(500).json({
                 message: "Failed to verify video existence",
                 error: error.message,
@@ -158,14 +162,18 @@ const getTranscript = async (req, res) => {
         );
 
         for (const method of methods) {
-            console.log(`Trying ${method.name}...`);
+            console.log(`[getTranscript] Trying ${method.name} for videoId: ${videoId}`);
             try {
                 transcriptList = await method.fn();
                 if (transcriptList && transcriptList.length > 0) {
-                    console.log(`Success with ${method.name}`);
+                    console.log(`[getTranscript] Success with ${method.name} for videoId: ${videoId}, segments: ${transcriptList.length}`);
                     break;
+                } else {
+                    console.log(`[getTranscript] No transcript returned by ${method.name} for videoId: ${videoId}`);
+                    errors.push(`${method.name}: No transcript found`);
                 }
             } catch (error) {
+                console.error(`[getTranscript] Error in ${method.name} for videoId: ${videoId}: ${error.message}`);
                 if (error.message.includes("too many requests")) {
                     rateLimited = true;
                 }
@@ -184,6 +192,7 @@ const getTranscript = async (req, res) => {
                 fetchedAt: new Date(),
                 expiresAt
             });
+            console.log(`[getTranscript] Cached successful transcript for videoId: ${videoId}`);
             return res.status(200).json({
                 message: "Transcript fetched successfully",
                 data: transcriptList,
@@ -204,6 +213,7 @@ const getTranscript = async (req, res) => {
                 fetchedAt: new Date(),
                 expiresAt
             });
+            console.log(`[getTranscript] Cached rate-limited state for videoId: ${videoId}`);
             return res.status(429).json({
                 message: "Too many requests to YouTube. Please try again later.",
                 status: false
@@ -217,6 +227,7 @@ const getTranscript = async (req, res) => {
                 fetchedAt: new Date(),
                 expiresAt
             });
+            console.log(`[getTranscript] Cached no-transcript state for videoId: ${videoId}, errors: ${JSON.stringify(errors)}`);
             return res.status(404).json({
                 message: "No transcript available for this video. The video might not have captions enabled.",
                 status: false,
@@ -224,7 +235,7 @@ const getTranscript = async (req, res) => {
             });
         }
     } catch (error) {
-        console.error("Unexpected error:", { message: error.message, stack: error.stack, videoId });
+        console.error(`[getTranscript] Unexpected error for videoId: ${videoId}: ${error.message}, stack: ${error.stack}`);
         return res.status(500).json({
             message: "Failed to fetch transcript",
             error: error.message,
