@@ -1,12 +1,11 @@
 const { google } = require('googleapis');
 const { YoutubeTranscript } = require('youtube-transcript');
-const { getSubtitles } = require('youtube-captions-scraper'); // Import youtube-captions-scraper
+const { getSubtitles } = require('youtube-captions-scraper');
 const axios = require('axios');
 const dotenv = require('dotenv');
-const Transcript = require('../../model/Transcript'); // Import the Transcript model
+const Transcript = require('../../model/Transcript');
 dotenv.config();
 
-const PYTHON_API = process.env.PYTHON_API || 'https://ai-py-backend.onrender.com';
 const APPLICATION_URL = process.env.APPLICATION_URL || 'https://new-ai-clip-1.onrender.com';
 
 // Configure global settings for Google APIs
@@ -36,7 +35,7 @@ async function fetchYoutubeTranscriptDirectly(videoId, lang = 'en') {
         }));
     } catch (error) {
         console.error(`YouTube-transcript error (${lang}):`, error.message);
-        throw error; // Let the caller handle the error
+        throw error;
     }
 }
 
@@ -50,19 +49,6 @@ async function fetchYoutubeCaptionsScraper(videoId, lang = 'en') {
         }));
     } catch (error) {
         console.error(`YouTube-captions-scraper error (${lang}):`, error.message);
-        throw error;
-    }
-}
-
-async function fetchFromPythonAPI(videoId) {
-    try {
-        if (!PYTHON_API) {
-            throw new Error('Python API URL not configured');
-        }
-        const response = await axios.get(`${PYTHON_API}/transcript/${videoId}`);
-        return response.data?.data || null;
-    } catch (error) {
-        console.error('Python API error:', error.message);
         throw error;
     }
 }
@@ -149,17 +135,12 @@ const getTranscript = async (req, res) => {
         let transcriptList = null;
         let rateLimited = false;
         const errors = [];
-        const methods = [];
-
-        if (PYTHON_API) {
-            methods.push({ name: 'Python API', fn: () => fetchFromPythonAPI(videoId) });
-        }
-        methods.push(
+        const methods = [
             { name: 'YouTube Captions Scraper (English)', fn: () => fetchYoutubeCaptionsScraper(videoId, 'en') },
             { name: 'YouTube Captions Scraper (any language)', fn: () => fetchYoutubeCaptionsScraper(videoId) },
             { name: 'YouTube Transcript (English)', fn: () => fetchYoutubeTranscriptDirectly(videoId, 'en') },
             { name: 'YouTube Transcript (any language)', fn: () => fetchYoutubeTranscriptDirectly(videoId) }
-        );
+        ];
 
         for (const method of methods) {
             console.log(`[getTranscript] Trying ${method.name} for videoId: ${videoId}`);
