@@ -1,11 +1,13 @@
 FROM node:22
 
-# Install system dependencies including FFmpeg
+# Install system dependencies including FFmpeg and python-is-python3
 RUN apt-get update && \
     apt-get install -y \
     python3 \
     python3-pip \
+    python-is-python3 \
     ffmpeg && \
+    python --version && \
     ffmpeg -version && \
     rm -rf /var/lib/apt/lists/*
 
