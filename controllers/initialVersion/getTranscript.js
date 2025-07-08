@@ -228,11 +228,31 @@ async function fetchFromPythonAPI(videoId) {
 
 // Main transcript endpoint
 const getTranscript = async (req, res) => {
+  console.log('Received request body:', req.body);
   const { url, platform: providedPlatform } = req.body;
-  const detectedPlatform = providedPlatform === 'auto' ? detectPlatformFromUrl(url) : providedPlatform;
+  console.log('URL:', url);
+  console.log('Provided platform:', providedPlatform);
 
-  if (!url || !detectedPlatform) {
-    return res.status(400).json({ message: 'Invalid video URL or unsupported platform', status: false });
+  // Detect platform if not provided or set to 'auto'
+  const detectedPlatform = providedPlatform === 'auto' || !providedPlatform 
+    ? detectPlatformFromUrl(url) 
+    : providedPlatform;
+  console.log('Detected platform:', detectedPlatform);
+
+  // Enhanced validation and error response
+  if (!url) {
+    return res.status(400).json({
+      message: 'Video URL is required',
+      details: { url, providedPlatform },
+      status: false,
+    });
+  }
+  if (!detectedPlatform) {
+    return res.status(400).json({
+      message: 'Unsupported platform or invalid URL',
+      details: { url, providedPlatform },
+      status: false,
+    });
   }
 
   const cacheKey = `${detectedPlatform}:${extractVideoId(url, detectedPlatform) || url}`;
@@ -299,7 +319,9 @@ const getTranscript = async (req, res) => {
   } catch (error) {
     console.error(`Transcript error for ${detectedPlatform}: ${error.message}`);
     const status = error.message.includes('Too many requests') ? 'rate_limited' : 'no_transcript';
-    const expiresAt = status === 'rate_limited' ? new Date(Date.now() + 5 * 60 * 1000) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const expiresAt = status === 'rate_limited' 
+      ? new Date(Date.now() + 5 * 60 * 1000) 
+      : new Date(Date.now() + 24 * 60 * 60 * 1000);
     
     await Transcript.create({
       videoId: cacheKey,
@@ -314,5 +336,4 @@ const getTranscript = async (req, res) => {
     });
   }
 };
-
 module.exports = { getTranscript };
