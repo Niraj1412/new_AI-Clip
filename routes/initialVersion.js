@@ -36,6 +36,7 @@ router.get('/oauth2callback', async (req, res) => {
 
 router.post("/playlist/:playlistId", getVideoIDByPlaylist);
 router.post("/video/:videoId", getTranscript);
+router.post("/video", getTranscript);
 router.post("/generateClips", generateClips);
 router.post("/details/:videoId", getDetailsByVideoID);
 router.get("/download", processClip);
