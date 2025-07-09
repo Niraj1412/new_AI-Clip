@@ -119,11 +119,13 @@ async function getVimeoTranscript(url) {
   }
 
   try {
+    console.log(`Fetching Vimeo text tracks for video ID: ${videoId}`);
     const accessToken = await getVimeoAccessToken();
     const response = await axios.get(`https://api.vimeo.com/videos/${videoId}/texttracks`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const textTracks = response.data.data;
+    console.log(`Text tracks response: ${JSON.stringify(textTracks)}`);
     if (textTracks.length > 0) {
       const transcriptUrl = textTracks[0].link;
       const transcriptResponse = await axios.get(transcriptUrl);
@@ -132,7 +134,7 @@ async function getVimeoTranscript(url) {
     console.log(`No text tracks available for Vimeo video: ${videoId}`);
     throw new Error('No text tracks available for this video');
   } catch (error) {
-    console.error(`Vimeo API error for URL ${url}: ${error.message}`);
+    console.error(`Vimeo API error for URL ${url}: ${error.message}`, error.response?.data);
     try {
       console.log(`Falling back to yt-dlp for URL: ${url}`);
       return await getTranscriptWithYtDlp(url);
