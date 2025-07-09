@@ -143,7 +143,7 @@ app.use('/api/v1/upload', uploadRoute);
 // ✅ Ensure these come BEFORE the generic /api/v1
 app.use('/api/v1/youtube', initialVersionRoute);
 app.use('/api/v1/video', videoRoutes);
-app.use('/api/v1', initialVersionRoute);
+app.use('/api/v1/url', initialVersionRoute);
 app.use('/api/merge', mergeRoute);
 app.use('/api/projects', projectRoutes);
 app.use('/api/v1/health', healthRoute);
