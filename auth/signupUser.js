@@ -1,7 +1,15 @@
 const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
+const { axiosWithProxy } = require("../utils/axiosWithProxy");
 const User = require("../model/usersSchema");
+const jwt = require("jsonwebtoken");
+const dotenv = require("dotenv");
+dotenv.config();
 
+// Initialize Google OAuth2 client
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Regular Sign-Up Function (Unchanged)
 const signupUser = async (req, res) => {
     try {
         const { name, email, password } = req.body;
@@ -10,7 +18,7 @@ const signupUser = async (req, res) => {
         if (!name || !email || !password) {
             return res.status(400).json({
                 status: false,
-                message: "All fields are required"
+                message: "All fields are required",
             });
         }
 
@@ -19,7 +27,7 @@ const signupUser = async (req, res) => {
         if (!emailRegex.test(email)) {
             return res.status(400).json({
                 status: false,
-                message: "Please provide a valid email address"
+                message: "Please provide a valid email address",
             });
         }
 
@@ -27,7 +35,7 @@ const signupUser = async (req, res) => {
         if (password.length < 6) {
             return res.status(400).json({
                 status: false,
-                message: "Password must be at least 6 characters long"
+                message: "Password must be at least 6 characters long",
             });
         }
 
@@ -36,7 +44,7 @@ const signupUser = async (req, res) => {
         if (existingUser) {
             return res.status(400).json({
                 status: false,
-                message: "User with this email already exists"
+                message: "User with this email already exists",
             });
         }
 
@@ -49,7 +57,7 @@ const signupUser = async (req, res) => {
             name,
             email,
             password: hashedPassword,
-            authProvider: 'local'
+            authProvider: "local",
         });
 
         // Save user
@@ -70,18 +78,95 @@ const signupUser = async (req, res) => {
                 id: user._id,
                 name: user.name,
                 email: user.email,
-                authProvider: user.authProvider
+                authProvider: user.authProvider,
             },
-            token
+            token,
         });
     } catch (err) {
         console.error("Signup error:", err);
         res.status(500).json({
             status: false,
             message: "Registration failed",
-            error: err.message
+            error: err.message,
         });
     }
 };
 
-module.exports = signupUser;
+// Google Sign-Up Function (New)
+const signupUserWithGoogle = async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        // Validate Google token presence
+        if (!token) {
+            return res.status(400).json({
+                status: false,
+                message: "Google token is required",
+            });
+        }
+
+        // Verify the Google token
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const { email, name, picture, sub } = ticket.getPayload();
+
+        // Check if user already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({
+                status: false,
+                message: "User with this email already exists. Please sign in instead.",
+            });
+        }
+
+        // Create new user with Google details
+        const user = new User({
+            name,
+            email,
+            profilePicture: picture,
+            googleId: sub,
+            authProvider: "google",
+            isGoogleUser: true,
+        });
+
+        // Save user
+        await user.save();
+
+        // Generate JWT token
+        const jwtToken = jwt.sign(
+            { userId: user._id, email: user.email },
+            process.env.JWT_SECRET || "your_jwt_secret_key",
+            { expiresIn: "24h" }
+        );
+
+        // Return success response
+        res.status(201).json({
+            status: true,
+            message: "User signed up successfully with Google",
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                profilePicture: user.profilePicture,
+                authProvider: user.authProvider,
+            },
+            token: jwtToken,
+        });
+    } catch (err) {
+        console.error("Google signup error:", err);
+        res.status(500).json({
+            status: false,
+            message: "Google signup failed",
+            error: err.message,
+        });
+    }
+};
+
+// Export both functions
+module.exports = {
+    signupUser,
+    signupUserWithGoogle,
+};

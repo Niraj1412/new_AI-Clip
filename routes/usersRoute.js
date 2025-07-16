@@ -18,7 +18,10 @@ const {
   signinUserWithGithub,
   signinUserWithTwitter
 } = require('../auth/signinUser');
-const signupUser = require('../auth/signupUser');
+const { 
+  signupUser,
+  signupUserWithGoogle,
+} = require('../auth/signupUser');
 
 // Public routes
 router.post('/login', loginUser);
@@ -30,6 +33,7 @@ router.post('/signin/password', signinUserWithPassword);
 router.post('/signin/google', signinUserWithGoogle);
 router.post('/signin/github', signinUserWithGithub);
 router.post('/signin/twitter', signinUserWithTwitter);
+router.post("/signup/google", signupUserWithGoogle);
 
 // Protected routes - require authentication
 router.get('/:id', protect, getUser);
