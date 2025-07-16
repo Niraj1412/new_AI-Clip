@@ -13,12 +13,10 @@ const openai = new OpenAI({
     dangerouslyAllowBrowser: true
 });
 
-// More accurate token counting function for OpenAI models
-const countTokens = (text) => {
-    return Math.ceil(text.length / 4);
-};
+// Token counting function
+const countTokens = (text) => Math.ceil(text.length / 4);
 
-// Create chunks based on a maximum token count
+// Create token-aware chunks
 const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
     const reservedTokens = 5000;
     const effectiveMaxTokens = maxTokensPerChunk - reservedTokens;
@@ -62,7 +60,7 @@ const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
 // Sleep function for rate limit handling
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Make OpenAI API call with retry logic for rate limits
+// OpenAI API call with retry logic
 const callOpenAIWithRetry = async (messages, model, temperature, maxRetries = 3) => {
     let retries = 0;
     while (retries <= maxRetries) {
@@ -88,8 +86,9 @@ const callOpenAIWithRetry = async (messages, model, temperature, maxRetries = 3)
     }
 };
 
-// Validation function to ensure clips are within bounds and meet prompt requirements
+// Enhanced validation function
 const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
+    // Validate individual clips
     for (const clip of clips) {
         const start = parseFloat(clip.startTime);
         const end = parseFloat(clip.endTime);
@@ -109,6 +108,15 @@ const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
             }
         }
     }
+    // Check for overlaps
+    const sortedClips = [...clips].sort((a, b) => parseFloat(a.startTime) - parseFloat(b.startTime));
+    for (let i = 0; i < sortedClips.length - 1; i++) {
+        const currentEnd = parseFloat(sortedClips[i].endTime);
+        const nextStart = parseFloat(sortedClips[i + 1].startTime);
+        if (currentEnd > nextStart - 0.5) {
+            throw new Error(`Clips overlap or have insufficient gap: clip ${i} ends at ${currentEnd}, clip ${i + 1} starts at ${nextStart}`);
+        }
+    }
 };
 
 const generateClips = async (req, res) => {
@@ -122,14 +130,13 @@ const generateClips = async (req, res) => {
             });
         }
 
-        // Extract video duration and segments from the first transcript object
         const videoTranscript = transcripts[0];
         const videoDuration = videoTranscript.duration;
         const segments = videoTranscript.segments;
 
         console.log(`Video duration: ${videoDuration}s, segments: ${segments.length}`);
 
-        // Parse customPrompt for explicit duration and end-part requirements
+        // Parse customPrompt
         let explicitDuration = null;
         const durationMatch = customPrompt.match(/(\d+(?:\.\d+)?)\s*second(?:s)?/i);
         if (durationMatch) {
@@ -137,7 +144,6 @@ const generateClips = async (req, res) => {
         }
         const isEndPart = /end|last/i.test(customPrompt);
 
-        // Split segments into token-aware chunks
         const transcriptChunks = createTokenAwareChunks(segments, 40000);
         console.log(`Split segments into ${transcriptChunks.length} token-aware chunks`);
 
@@ -151,18 +157,18 @@ const generateClips = async (req, res) => {
             const messages = [
                 {
                     role: "system",
-                    content: "You are a precise transcript processor and master storyteller with an emphasis on narrative cohesion and accuracy. When generating clips, you must maintain the exact wording from the source material while creating a compelling narrative flow. Never modify, paraphrase, or correct the original transcript text. Produce only valid JSON arrays with accurate numeric values and exact transcript quotes. Accuracy and fidelity to the original content remain your highest priority while creating an engaging storyline."
+                    content: "You are a precise transcript processor. When generating clips, use exact wording from the transcript without modification. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy."
                 }
             ];
 
             if (potentialSegments.length > 0 && !isFirstChunk) {
                 messages.push({
                     role: "user",
-                    content: `Important segments identified from previous chunks (for reference only):\n${JSON.stringify(potentialSegments, null, 2)}`
+                    content: `Previous segments (reference only):\n${JSON.stringify(potentialSegments, null, 2)}`
                 });
                 messages.push({
                     role: "assistant",
-                    content: "I've noted these important segments from previous chunks and will consider them as I analyze the next chunk."
+                    content: "Noted previous segments for reference."
                 });
             }
 
@@ -170,125 +176,84 @@ const generateClips = async (req, res) => {
 
             if (!isLastChunk) {
                 chunkPrompt = `
-USER CONTEXT: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
+USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
 
-ADDITIONAL CONSTRAINTS:
-- The video duration is ${videoDuration.toFixed(2)} seconds.
-- All clips must have startTime >= 0 and endTime <= ${videoDuration.toFixed(2)}.
-${
-    explicitDuration
-        ? `- The clip must be exactly ${explicitDuration.toFixed(2)} seconds long (±0.05 seconds).`
-        : '- Clip duration should be between 3.00 and 60.00 seconds.'
-}
-${
-    isEndPart
-        ? `- The clip must be from the end part of the video, starting after ${(videoDuration * 0.8).toFixed(2)} seconds.`
-        : ''
-}
+TASK: This is chunk ${i + 1} of ${transcriptChunks.length}.
 
-TASK: This is chunk ${i+1} of ${transcriptChunks.length} of segment data.
-
-Please analyze these segments and identify the most important 5-10 segments that could be part of a cohesive narrative. For each segment, provide:
+Based on the user's request, identify the most relevant 5-10 segments. Provide:
 1. The videoId
-2. The exact transcript text (do not modify it)
+2. The exact transcript text (do not modify)
 3. The start and end times
+4. Notes on relevance to the request
 
-Return the segments as a JSON array in this format:
+Return a JSON array:
 [
   {
     "videoId": "string",
-    "transcriptText": "exact quote from transcript",
+    "transcriptText": "exact quote",
     "startTime": number,
     "endTime": number,
-    "notes": "brief explanation of why this segment is important to the narrative"
+    "notes": "why this matches the request"
   }
 ]
 
-Segment Chunk ${i+1}/${transcriptChunks.length}:
+Chunk ${i + 1}/${transcriptChunks.length}:
 ${JSON.stringify(chunk, null, 2)}`;
             } else {
                 chunkPrompt = `
-USER CONTEXT: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
+USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
 
-ADDITIONAL CONSTRAINTS:
-- The video duration is ${videoDuration.toFixed(2)} seconds.
-- All clips must have startTime >= 0 and endTime <= ${videoDuration.toFixed(2)}.
+CONSTRAINTS:
+- Video duration: ${videoDuration.toFixed(2)} seconds
+- StartTime >= 0, endTime <= ${videoDuration.toFixed(2)}
 ${
     explicitDuration
-        ? `- The clip must be exactly ${explicitDuration.toFixed(2)} seconds long (±0.05 seconds).`
-        : '- Clip duration should be between 3.00 and 60.00 seconds.'
+        ? `- Clip must be exactly ${explicitDuration.toFixed(2)} seconds (±0.05 seconds)`
+        : '- Duration between 3.00 and 60.00 seconds'
 }
 ${
     isEndPart
-        ? `- The clip must be from the end part of the video, starting after ${(videoDuration * 0.8).toFixed(2)} seconds.`
+        ? `- Clip must start after ${(videoDuration * 0.8).toFixed(2)} seconds (end part)`
         : ''
 }
 
-TASK: This is the final chunk (${i+1} of ${transcriptChunks.length}) of segment data.
+TASK: Final chunk (${i + 1}/${transcriptChunks.length}).
 
-Now that you have analyzed all chunks of segment data, please create a cohesive narrative story by selecting and combining the most meaningful segments from ALL chunks, including those from previous important segments list and this final chunk.
+Select and combine segments from all chunks to match the user's request. If the request specifies a duration or part, generate clips that strictly adhere to those constraints. Otherwise, create a cohesive narrative with multiple clips.
 
-IMPORTANT: Return ONLY a valid JSON array with the final clip selections. All numbers should be fixed to 2 decimal places. DO NOT use JavaScript expressions or functions.
-
-OUTPUT FORMAT:
+Return a JSON array:
 [
   {
     "videoId": "string",
-    "transcriptText": "exact quote from transcript - do not modify or paraphrase",
-    "startTime": number (add buffer of -2.00 if start > 2.00),
-    "endTime": number (add buffer of +2.00)
+    "transcriptText": "exact quote - no modification",
+    "startTime": number (add -2.00 buffer if > 2.00),
+    "endTime": number (add +2.00 buffer)
   }
 ]
 
 RULES:
-1. TIMESTAMPS:
-   - Use exact numbers with 2 decimal places
-   - Add 2.00 second buffer at start (if start > 2.00)
-   - Add 2.00 second buffer at end
-   - Minimum 0.50 second gap between clips
-   - Duration: 3.00-60.00 seconds unless specified otherwise
-   - No overlapping segments
+- Use 2 decimal places for numbers
+- Add 2.00s buffer at start (if > 2.00) and end
+- Minimum 0.50s gap between clips
+- No overlapping segments
+- Exact transcript quotes only
+- Prioritize user request over narrative if specific
 
-2. CONTENT ACCURACY:
-   - Use EXACT quotes from transcripts without modification
-   - Never paraphrase or reword the transcript content
-   - Retain all verbal nuances from the original
-   - Include complete sentences with their full context
-   - Maintain perfect accuracy of the spoken content
-
-3. NARRATIVE STORYTELLING:
-   - Build a coherent story with a beginning, middle, and end
-   - Select segments that connect logically and thematically
-   - Create smooth transitions between different transcript segments
-   - Ensure the assembled clips tell a compelling, unified story
-   - Identify and highlight key narrative elements across transcripts
-
-4. SELECTION CRITERIA:
-   - Maintain narrative flow and story progression
-   - Focus on relevant, meaningful content
-   - Remove filler content and digressions
-   - Prioritize clarity and articulation
-   - Select segments with clear speech and minimal background noise
-   - Choose segments that contribute meaningfully to the story arc
-
-Here are the important segments from previous chunks:
+Previous segments:
 ${JSON.stringify(potentialSegments, null, 2)}
 
-Current (final) chunk data:
-${JSON.stringify(chunk, null, 2)}
-
-Remember: Return ONLY a valid JSON array with proper numeric values (no expressions). While creating a compelling narrative is important, transcript accuracy is still the highest priority.`;
+Final chunk:
+${JSON.stringify(chunk, null, 2)}`;
             }
 
             messages.push({ role: "user", content: chunkPrompt });
 
-            console.log(`Processing chunk ${i+1}/${transcriptChunks.length}...`);
+            console.log(`Processing chunk ${i + 1}/${transcriptChunks.length}...`);
             const result = await callOpenAIWithRetry(messages, "gpt-4o-mini-2024-07-18", 0.2);
-
             const responseContent = result.choices[0].message.content;
 
             if (isLastChunk) {
-                console.log("Final response received from OpenAI");
+                console.log("Final response received");
                 let clips;
                 try {
                     const jsonMatch = responseContent.match(/\[\s*\{.*\}\s*\]/s);
@@ -297,7 +262,6 @@ Remember: Return ONLY a valid JSON array with proper numeric values (no expressi
                     validateClips(clips, videoDuration, explicitDuration, isEndPart);
                 } catch (error) {
                     console.error("Validation failed:", error.message);
-                    // Fallback to last explicitDuration seconds
                     const fallbackDuration = explicitDuration || 11;
                     const startTime = Math.max(0, videoDuration - fallbackDuration);
                     const endTime = videoDuration;
@@ -324,15 +288,15 @@ Remember: Return ONLY a valid JSON array with proper numeric values (no expressi
                     if (jsonMatch) {
                         const segmentsFromChunk = JSON.parse(jsonMatch[0]);
                         potentialSegments = [...potentialSegments, ...segmentsFromChunk].slice(-30);
-                        console.log(`Added ${segmentsFromChunk.length} potential segments from chunk ${i+1}`);
+                        console.log(`Added ${segmentsFromChunk.length} segments from chunk ${i + 1}`);
                     }
                 } catch (error) {
-                    console.warn(`Error parsing segments from chunk ${i+1}: ${error.message}`);
+                    console.warn(`Error parsing chunk ${i + 1}: ${error.message}`);
                 }
             }
         }
     } catch (error) {
-        console.error("General error in generateClips:", error);
+        console.error("Error in generateClips:", error);
         return res.status(500).json({
             success: false,
             message: "Failed to generate video script",
