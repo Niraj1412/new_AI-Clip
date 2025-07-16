@@ -3,7 +3,6 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
 if (!OPENAI_API_KEY) {
     console.error('OpenAI API key is missing. Please check your .env file.');
 }
@@ -88,7 +87,9 @@ const callOpenAIWithRetry = async (messages, model, temperature, maxRetries = 3)
 
 // Enhanced validation function
 const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
-    // Validate individual clips
+    if (clips.length < 3 || clips.length > 8) {
+        throw new Error(`Number of clips must be between 3 and 8, got ${clips.length}`);
+    }
     for (const clip of clips) {
         const start = parseFloat(clip.startTime);
         const end = parseFloat(clip.endTime);
@@ -108,7 +109,6 @@ const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
             }
         }
     }
-    // Check for overlaps
     const sortedClips = [...clips].sort((a, b) => parseFloat(a.startTime) - parseFloat(b.startTime));
     for (let i = 0; i < sortedClips.length - 1; i++) {
         const currentEnd = parseFloat(sortedClips[i].endTime);
@@ -122,7 +122,6 @@ const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
 const generateClips = async (req, res) => {
     try {
         const { transcripts, customPrompt } = req.body;
-
         if (!transcripts || !Array.isArray(transcripts) || transcripts.length === 0) {
             return res.status(400).json({
                 success: false,
@@ -175,16 +174,12 @@ const generateClips = async (req, res) => {
             let chunkPrompt;
 
             if (!isLastChunk) {
-                chunkPrompt = `
-USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
-
-TASK: This is chunk ${i + 1} of ${transcriptChunks.length}.
-
-Based on the user's request, identify the most relevant 5-10 segments. Provide:
-1. The videoId
-2. The exact transcript text (do not modify)
-3. The start and end times
-4. Notes on relevance to the request
+                chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
+TASK: This is chunk ${i + 1} of ${transcriptChunks.length}. Based on the user's request, identify the most relevant 5-10 segments. Provide:
+- The videoId
+- The exact transcript text (do not modify)
+- The start and end times
+- Notes on relevance to the request
 
 Return a JSON array:
 [
@@ -196,52 +191,45 @@ Return a JSON array:
     "notes": "why this matches the request"
   }
 ]
-
 Chunk ${i + 1}/${transcriptChunks.length}:
 ${JSON.stringify(chunk, null, 2)}`;
             } else {
-                chunkPrompt = `
-USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
-
+                chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
 CONSTRAINTS:
 - Video duration: ${videoDuration.toFixed(2)} seconds
 - StartTime >= 0, endTime <= ${videoDuration.toFixed(2)}
 ${
-    explicitDuration
-        ? `- Clip must be exactly ${explicitDuration.toFixed(2)} seconds (±0.05 seconds)`
-        : '- Duration between 3.00 and 60.00 seconds'
+  explicitDuration
+    ? `- Each clip must be exactly ${explicitDuration.toFixed(2)} seconds (±0.05 seconds)`
+    : `- Each clip duration between 3.00 and 60.00 seconds`
 }
 ${
     isEndPart
-        ? `- Clip must start after ${(videoDuration * 0.8).toFixed(2)} seconds (end part)`
+        ? `- Clips must start after ${(videoDuration * 0.8).toFixed(2)} seconds (end part)`
         : ''
 }
+TASK: Final chunk (${i + 1}/${transcriptChunks.length}). Generate between 3 and 8 clips that best match the user's request. Select segments that are engaging, surprising, or emotionally impactful to create a compelling teaser or sequence. For prompts implying a sequence (e.g., "transitions" or "builds tension"), ensure clips form a cohesive narrative that escalates.
 
-TASK: Final chunk (${i + 1}/${transcriptChunks.length}).
-
-Select and combine segments from all chunks to match the user's request. If the request specifies a duration or part, generate clips that strictly adhere to those constraints. Otherwise, create a cohesive narrative with multiple clips.
-
-Return a JSON array:
+Return a JSON array with 3 to 8 clips:
 [
   {
     "videoId": "string",
     "transcriptText": "exact quote - no modification",
     "startTime": number (add -2.00 buffer if > 2.00),
     "endTime": number (add +2.00 buffer)
-  }
+  },
+  ...
 ]
-
 RULES:
 - Use 2 decimal places for numbers
-- Add 2.00s buffer at start (if > 2.00) and end
-- Minimum 0.50s gap between clips
+- Add 2.00s buffer at start (if > 2.00) and end for each clip
+- Ensure minimum 0.50s gap between clips
 - No overlapping segments
-- Exact transcript quotes only
-- Prioritize user request over narrative if specific
+- Use exact transcript quotes only
+- Prioritize user request
 
-Previous segments:
+Previous segments for reference:
 ${JSON.stringify(potentialSegments, null, 2)}
-
 Final chunk:
 ${JSON.stringify(chunk, null, 2)}`;
             }
@@ -262,19 +250,26 @@ ${JSON.stringify(chunk, null, 2)}`;
                     validateClips(clips, videoDuration, explicitDuration, isEndPart);
                 } catch (error) {
                     console.error("Validation failed:", error.message);
-                    const fallbackDuration = explicitDuration || 11;
-                    const startTime = Math.max(0, videoDuration - fallbackDuration);
-                    const endTime = videoDuration;
-                    const fallbackText = segments
-                        .filter(s => s.startTime < endTime && s.endTime > startTime)
-                        .map(s => s.text)
-                        .join(' ');
-                    clips = [{
-                        videoId: videoTranscript.videoId || segments[0].videoId,
-                        transcriptText: fallbackText || "No transcript available",
-                        startTime: startTime.toFixed(2),
-                        endTime: endTime.toFixed(2)
-                    }];
+                    // Fallback to generate 3 to 8 clips
+                    const fallbackClips = [];
+                    const clipCount = 5; // Default to 5 clips in fallback
+                    const clipDuration = explicitDuration || 10; // Default to 10s if not specified
+                    const interval = videoDuration / clipCount;
+                    for (let j = 0; j < clipCount; j++) {
+                        const startTime = (interval * j);
+                        const endTime = Math.min(startTime + clipDuration, videoDuration);
+                        const fallbackText = segments
+                            .filter(s => s.startTime >= startTime && s.endTime <= endTime)
+                            .map(s => s.text)
+                            .join(' ');
+                        fallbackClips.push({
+                            videoId: videoTranscript.videoId || segments[0].videoId,
+                            transcriptText: fallbackText || "No transcript available",
+                            startTime: startTime.toFixed(2),
+                            endTime: endTime.toFixed(2)
+                        });
+                    }
+                    clips = fallbackClips;
                 }
 
                 return res.status(200).json({
