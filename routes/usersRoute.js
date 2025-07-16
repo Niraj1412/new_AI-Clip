@@ -23,6 +23,8 @@ const {
   signupUserWithGoogle,
 } = require('../auth/signupUser');
 
+const { forgotPassword, resetPassword } = require('../auth/passwordReset');
+
 // Public routes
 router.post('/login', loginUser);
 router.post('/', addUser); // For registration
@@ -39,5 +41,8 @@ router.post("/signup/google", signupUserWithGoogle);
 router.get('/:id', protect, getUser);
 router.put('/:id', protect, updateUser);
 router.delete('/:id', protect, deleteUser);
+
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 
 module.exports = router;
