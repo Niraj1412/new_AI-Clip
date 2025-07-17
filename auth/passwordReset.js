@@ -1,11 +1,29 @@
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const User = require('../model/usersSchema');
+const nodemailer = require('nodemailer');
 // Note: In a real application, implement sendResetEmail with a service like Nodemailer or SendGrid.
 // For this example, assume it exists.
 const sendResetEmail = async (email, resetUrl) => {
-  console.log(`Sending reset email to ${email} with URL: ${resetUrl}`);
-  // Implementation depends on your email service.
+  // Create a transporter object using your SMTP server details
+  let transporter = nodemailer.createTransport({
+    host: 'smtp.example.com', // Replace with your SMTP host (e.g., smtp.gmail.com for Gmail)
+    port: 587, // Use 465 for SSL, 587 for TLS
+    secure: false, // True for port 465, false for 587
+    auth: {
+      user: '12niraj01@gmail.com',
+      pass: 'Niraj@2002' // Your email password or app-specific password
+    }
+  });
+
+  const mailOptions = {
+    from: '12niraj01@gmail.com',
+    to: email,
+    subject: 'Password Reset',
+    text: `You requested a password reset. Click the link to reset your password: ${resetUrl}`
+  };
+
+  await transporter.sendMail(mailOptions);
 };
 
 const forgotPassword = async (req, res) => {
