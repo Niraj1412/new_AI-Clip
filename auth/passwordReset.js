@@ -46,7 +46,7 @@ const forgotPassword = async (req, res) => {
     user.passwordResetExpires = resetExpires;
     await user.save();
 
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    const resetUrl = `https://clip-frontend-three.vercel.app/reset-password?token=${resetToken}`;
     await sendResetEmail(user.email, resetUrl);
 
     res.status(200).json({ status: true, message: "If the email exists, a reset link will be sent." });
