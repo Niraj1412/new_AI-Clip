@@ -12,7 +12,7 @@ const sendResetEmail = async (email, resetUrl) => {
     secure: false, // True for port 465, false for 587
     auth: {
       user: '12niraj01@gmail.com',
-      pass: 'Niraj@2002' // Your email password or app-specific password
+      pass: 'jtyqjabpakgtaxqx' // Your email password or app-specific password jtyq jabp akgt axqx
     }
   });
 
