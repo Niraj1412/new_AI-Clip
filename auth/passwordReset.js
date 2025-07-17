@@ -7,7 +7,7 @@ const nodemailer = require('nodemailer');
 const sendResetEmail = async (email, resetUrl) => {
   // Create a transporter object using your SMTP server details
   let transporter = nodemailer.createTransport({
-    host: 'smtp.example.com', // Replace with your SMTP host (e.g., smtp.gmail.com for Gmail)
+    host: 'smtp.gmail.com', // Replace with your SMTP host (e.g., smtp.gmail.com for Gmail)
     port: 587, // Use 465 for SSL, 587 for TLS
     secure: false, // True for port 465, false for 587
     auth: {
