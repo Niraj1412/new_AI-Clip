@@ -39,11 +39,11 @@ const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
             continue;
         }
 
-        if (currentChunkTokens + segmentTokens > effectiveMaxTokens && currentChunk.length > 0) {
-            chunks.push([...currentChunk]);
-            currentChunk = [];
-            currentChunkTokens = 0;
-        }
+if (currentChunkTokens + segmentTokens > effectiveMaxTokens && currentChunk.length > 0) {
+    chunks.push([...currentChunk]);
+    currentChunk = [];
+    currentChunkTokens = 0;
+}
 
         currentChunk.push(segment);
         currentChunkTokens += segmentTokens;
@@ -148,11 +148,14 @@ const generateClips = async (req, res) => {
             });
         }
 
+
         const videoTranscript = transcripts[0];
         const videoDuration = videoTranscript.duration;
         const segments = videoTranscript.segments;
-
         console.log(`Video duration: ${videoDuration}s, segments: ${segments.length}`);
+
+        // Check if transcript is likely non-English
+        const isNonEnglish = segments.some(segment => /[^\x00-\x7F]/.test(segment.text));
 
         // Parse customPrompt
         let explicitDuration = null;
@@ -172,10 +175,15 @@ const generateClips = async (req, res) => {
             const isFirstChunk = i === 0;
             const isLastChunk = i === transcriptChunks.length - 1;
 
+            // Adjust system message based on language detection
+            const systemContent = isNonEnglish
+                ? "You are a precise transcript processor for non-English content. The transcript is in a language other than English. When generating clips, use exact wording from the transcript without modification. Interpret the user's request and find matching content in the transcript, considering the language difference. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy."
+                : "You are a precise transcript processor. When generating clips, use exact wording from the transcript without modification. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy.";
+
             const messages = [
                 {
                     role: "system",
-                    content: "You are a precise transcript processor. When generating clips, use exact wording from the transcript without modification. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy."
+                    content: systemContent
                 }
             ];
 
@@ -194,6 +202,7 @@ const generateClips = async (req, res) => {
 
             if (!isLastChunk) {
                 chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
+${isNonEnglish ? "NOTE: The transcript is in a non-English language. Interpret the request and find matching content accordingly." : ""}
 TASK: This is chunk ${i + 1} of ${transcriptChunks.length}. Based on the user's request, identify the most relevant 5-10 segments. Provide:
 - The videoId
 - The exact transcript text (do not modify)
@@ -214,6 +223,7 @@ Chunk ${i + 1}/${transcriptChunks.length}:
 ${JSON.stringify(chunk, null, 2)}`;
             } else {
                 chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
+${isNonEnglish ? "NOTE: The transcript is in a non-English language. Interpret the request and find matching content accordingly." : ""}
 CONSTRAINTS:
 - Video duration: ${videoDuration.toFixed(2)} seconds
 - StartTime >= 0, endTime <= ${videoDuration.toFixed(2)}
