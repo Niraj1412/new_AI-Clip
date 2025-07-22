@@ -119,6 +119,25 @@ const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
     }
 };
 
+// Helper function to get closest transcript
+const getClosestTranscript = (segments, startTime, endTime) => {
+    const closestBefore = segments
+        .filter(s => s.endTime <= startTime)
+        .sort((a, b) => b.endTime - a.endTime)[0];
+    const closestAfter = segments
+        .filter(s => s.startTime >= endTime)
+        .sort((a, b) => a.startTime - b.startTime)[0];
+    if (closestBefore && closestAfter) {
+        return `${closestBefore.text} ... ${closestAfter.text}`;
+    } else if (closestBefore) {
+        return closestBefore.text;
+    } else if (closestAfter) {
+        return closestAfter.text;
+    } else {
+        return "Transcript unavailable for this video section.";
+    }
+};
+
 const generateClips = async (req, res) => {
     try {
         const { transcripts, customPrompt } = req.body;
@@ -256,20 +275,33 @@ ${JSON.stringify(chunk, null, 2)}`;
                     const clipDuration = explicitDuration || 10; // Default to 10s if not specified
                     const interval = videoDuration / clipCount;
                     for (let j = 0; j < clipCount; j++) {
-                        const startTime = (interval * j);
+                        const startTime = interval * j;
                         const endTime = Math.min(startTime + clipDuration, videoDuration);
-                        const fallbackText = segments
-                            .filter(s => s.startTime >= startTime && s.endTime <= endTime)
-                            .map(s => s.text)
-                            .join(' ');
+                        const overlappingSegments = segments.filter(s => s.startTime < endTime && s.endTime > startTime);
+                        let transcriptText = overlappingSegments.map(s => s.text).join(' ');
+                        if (!transcriptText) {
+                            transcriptText = getClosestTranscript(segments, startTime, endTime);
+                        }
                         fallbackClips.push({
                             videoId: videoTranscript.videoId || segments[0].videoId,
-                            transcriptText: fallbackText || "No transcript available",
+                            transcriptText,
                             startTime: startTime.toFixed(2),
                             endTime: endTime.toFixed(2)
                         });
                     }
                     clips = fallbackClips;
+                }
+
+                // Ensure all clips have transcript text
+                for (let clip of clips) {
+                    if (!clip.transcriptText || clip.transcriptText.trim() === "" || clip.transcriptText === "No transcript available") {
+                        const overlappingSegments = segments.filter(s => s.startTime < clip.endTime && s.endTime > clip.startTime);
+                        if (overlappingSegments.length > 0) {
+                            clip.transcriptText = overlappingSegments.map(s => s.text).join(' ');
+                        } else {
+                            clip.transcriptText = getClosestTranscript(segments, clip.startTime, clip.endTime);
+                        }
+                    }
                 }
 
                 return res.status(200).json({
