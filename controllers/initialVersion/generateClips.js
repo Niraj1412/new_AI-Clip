@@ -39,11 +39,11 @@ const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
             continue;
         }
 
-if (currentChunkTokens + segmentTokens > effectiveMaxTokens && currentChunk.length > 0) {
-    chunks.push([...currentChunk]);
-    currentChunk = [];
-    currentChunkTokens = 0;
-}
+        if (currentChunkTokens + segmentTokens > effectiveMaxTokens && currentChunk.length > 0) {
+            chunks.push([...currentChunk]);
+            currentChunk = [];
+            currentChunkTokens = 0;
+        }
 
         currentChunk.push(segment);
         currentChunkTokens += segmentTokens;
@@ -148,7 +148,6 @@ const generateClips = async (req, res) => {
             });
         }
 
-
         const videoTranscript = transcripts[0];
         const videoDuration = videoTranscript.duration;
         const segments = videoTranscript.segments;
@@ -159,11 +158,11 @@ const generateClips = async (req, res) => {
 
         // Parse customPrompt
         let explicitDuration = null;
-        const durationMatch = customPrompt.match(/(\d+(?:\.\d+)?)\s*second(?:s)?/i);
+        const durationMatch = customPrompt && customPrompt.match ? customPrompt.match(/(\d+(?:\.\d+)?)\s*second(?:s)?/i) : null;
         if (durationMatch) {
             explicitDuration = parseFloat(durationMatch[1]);
         }
-        const isEndPart = /end|last/i.test(customPrompt);
+        const isEndPart = customPrompt && /end|last/i.test(customPrompt);
 
         const transcriptChunks = createTokenAwareChunks(segments, 40000);
         console.log(`Split segments into ${transcriptChunks.length} token-aware chunks`);
@@ -175,10 +174,10 @@ const generateClips = async (req, res) => {
             const isFirstChunk = i === 0;
             const isLastChunk = i === transcriptChunks.length - 1;
 
-            // Adjust system message based on language detection
+            // Enhanced system message
             const systemContent = isNonEnglish
-                ? "You are a precise transcript processor for non-English content. The transcript is in a language other than English. When generating clips, use exact wording from the transcript without modification. Interpret the user's request and find matching content in the transcript, considering the language difference. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy."
-                : "You are a precise transcript processor. When generating clips, use exact wording from the transcript without modification. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy.";
+                ? `You are a precise transcript processor capable of handling multilingual content. The user's request is in English, but the transcript is in a non-English language (likely Hindi). Your task is to interpret the user's English request and find the corresponding parts in the transcript that match the requested concept or topic, even if the languages differ. Use the exact wording from the transcript without modification when generating clips. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy.`
+                : `You are a precise transcript processor. When generating clips, use exact wording from the transcript without modification. Return valid JSON arrays with accurate numeric values. Prioritize the user's specific request while ensuring accuracy.`;
 
             const messages = [
                 {
@@ -202,7 +201,11 @@ const generateClips = async (req, res) => {
 
             if (!isLastChunk) {
                 chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
-${isNonEnglish ? "NOTE: The transcript is in a non-English language. Interpret the request and find matching content accordingly." : ""}
+${isNonEnglish ? `NOTE: The transcript is in a non-English language (likely Hindi). Follow these steps to interpret the request and find matching content:
+1. Identify the key concepts or topics from the user's English request (e.g., 'strings' and 'explained').
+2. Consider how these concepts might be expressed in the transcript's language (e.g., 'strings' might be 'स्ट्रिंग' or a related term).
+3. Search the transcript for segments that discuss these concepts.
+4. Select the most relevant segments based on the user's request.` : ""}
 TASK: This is chunk ${i + 1} of ${transcriptChunks.length}. Based on the user's request, identify the most relevant 5-10 segments. Provide:
 - The videoId
 - The exact transcript text (do not modify)
@@ -211,43 +214,40 @@ TASK: This is chunk ${i + 1} of ${transcriptChunks.length}. Based on the user's 
 
 Return a JSON array:
 [
-  {
-    "videoId": "string",
-    "transcriptText": "exact quote",
-    "startTime": number,
-    "endTime": number,
-    "notes": "why this matches the request"
-  }
+    {
+        "videoId": "string",
+        "transcriptText": "exact quote",
+        "startTime": 0.00,
+        "endTime": 0.00,
+        "notes": "why this matches the request"
+    }
 ]
 Chunk ${i + 1}/${transcriptChunks.length}:
 ${JSON.stringify(chunk, null, 2)}`;
             } else {
                 chunkPrompt = `USER REQUEST: ${customPrompt || "Generate engaging clips from the transcript with accurate timestamps."}
-${isNonEnglish ? "NOTE: The transcript is in a non-English language. Interpret the request and find matching content accordingly." : ""}
+${isNonEnglish ? `NOTE: The transcript is in a non-English language (likely Hindi). Follow these steps to generate the clips:
+1. Review the user's request: "${customPrompt || "Generate engaging clips"}".
+2. Identify the key concepts or topics from the request (e.g., 'strings' and 'explained').
+3. Consider how these concepts might be expressed in Hindi (e.g., 'strings' might be 'स्ट्रिंग' or a contextual description; 'explained' might be 'समझाया गया').
+4. Search the transcript for segments that discuss these concepts.
+5. Select between 3 and 8 segments that best match the user's request, ensuring they are relevant and engaging.
+6. For each selected segment, provide the videoId, exact transcript text, startTime, and endTime, following the specified rules.` : ""}
 CONSTRAINTS:
 - Video duration: ${videoDuration.toFixed(2)} seconds
 - StartTime >= 0, endTime <= ${videoDuration.toFixed(2)}
-${
-  explicitDuration
-    ? `- Each clip must be exactly ${explicitDuration.toFixed(2)} seconds (±0.05 seconds)`
-    : `- Each clip duration between 3.00 and 60.00 seconds`
-}
-${
-    isEndPart
-        ? `- Clips must start after ${(videoDuration * 0.8).toFixed(2)} seconds (end part)`
-        : ''
-}
-TASK: Final chunk (${i + 1}/${transcriptChunks.length}). Generate between 3 and 8 clips that best match the user's request. Select segments that are engaging, surprising, or emotionally impactful to create a compelling teaser or sequence. For prompts implying a sequence (e.g., "transitions" or "builds tension"), ensure clips form a cohesive narrative that escalates.
+${explicitDuration ? `- Each clip must be exactly ${explicitDuration.toFixed(2)} seconds (±0.05 seconds)` : `- Each clip duration between 3.00 and 60.00 seconds`}
+${isEndPart ? `- Clips must start after ${(videoDuration * 0.8).toFixed(2)} seconds (end part)` : ""}
+TASK: Final chunk (${i + 1}/${transcriptChunks.length}). Generate between 3 and 8 clips that best match the user's request. Select segments that are engaging and directly address the user's prompt.
 
 Return a JSON array with 3 to 8 clips:
 [
-  {
-    "videoId": "string",
-    "transcriptText": "exact quote - no modification",
-    "startTime": number (add -2.00 buffer if > 2.00),
-    "endTime": number (add +2.00 buffer)
-  },
-  ...
+    {
+        "videoId": "string",
+        "transcriptText": "exact quote - no modification",
+        "startTime": 0.00,
+        "endTime": 0.00
+    }
 ]
 RULES:
 - Use 2 decimal places for numbers
@@ -273,7 +273,7 @@ ${JSON.stringify(chunk, null, 2)}`;
                 console.log("Final response received");
                 let clips;
                 try {
-                    const jsonMatch = responseContent.match(/\[\s*\{.*\}\s*\]/s);
+                    const jsonMatch = responseContent.match(/\[\s*\{[\s\S]*?\}\s*\]/);
                     const jsonContent = jsonMatch ? jsonMatch[0] : responseContent;
                     clips = JSON.parse(jsonContent);
                     validateClips(clips, videoDuration, explicitDuration, isEndPart);
@@ -285,43 +285,47 @@ ${JSON.stringify(chunk, null, 2)}`;
                     const clipDuration = explicitDuration || 10; // Default to 10s if not specified
                     const interval = videoDuration / clipCount;
                     for (let j = 0; j < clipCount; j++) {
-                        const startTime = interval * j;
-                        const endTime = Math.min(startTime + clipDuration, videoDuration);
+                        let startTime = interval * j;
+                        let endTime = Math.min(startTime + clipDuration, videoDuration);
+                        // Apply buffer
+                        if (startTime > 2) startTime = Math.max(0, startTime - 2);
+                        endTime = Math.min(endTime + 2, videoDuration);
                         const overlappingSegments = segments.filter(s => s.startTime < endTime && s.endTime > startTime);
                         let transcriptText = overlappingSegments.map(s => s.text).join(' ');
                         if (!transcriptText) {
                             transcriptText = getClosestTranscript(segments, startTime, endTime);
                         }
                         fallbackClips.push({
-                            videoId: videoTranscript.videoId || segments[0].videoId,
+                            videoId: videoTranscript.videoId || segments[0].videoId || "unknown",
                             transcriptText,
-                            startTime: startTime.toFixed(2),
-                            endTime: endTime.toFixed(2)
+                            startTime: parseFloat(startTime.toFixed(2)),
+                            endTime: parseFloat(endTime.toFixed(2))
                         });
                     }
                     clips = fallbackClips;
+                    validateClips(clips, videoDuration, explicitDuration, isEndPart);
                 }
 
                 // Ensure all clips have transcript text
                 for (let clip of clips) {
                     if (!clip.transcriptText || clip.transcriptText.trim() === "" || clip.transcriptText === "No transcript available") {
-                        const overlappingSegments = segments.filter(s => s.startTime < clip.endTime && s.endTime > clip.startTime);
+                        const overlappingSegments = segments.filter(s => s.startTime < parseFloat(clip.endTime) && s.endTime > parseFloat(clip.startTime));
                         if (overlappingSegments.length > 0) {
                             clip.transcriptText = overlappingSegments.map(s => s.text).join(' ');
                         } else {
-                            clip.transcriptText = getClosestTranscript(segments, clip.startTime, clip.endTime);
+                            clip.transcriptText = getClosestTranscript(segments, parseFloat(clip.startTime), parseFloat(clip.endTime));
                         }
                     }
                 }
 
                 return res.status(200).json({
                     success: true,
-                    data: { script: JSON.stringify(clips) },
+                    data: { script: clips }, // Return clips directly as array
                     message: "Video script generated successfully"
                 });
             } else {
                 try {
-                    const jsonMatch = responseContent.match(/\[\s*\{.*\}\s*\]/s);
+                    const jsonMatch = responseContent.match(/\[\s*\{[\s\S]*?\}\s*\]/);
                     if (jsonMatch) {
                         const segmentsFromChunk = JSON.parse(jsonMatch[0]);
                         potentialSegments = [...potentialSegments, ...segmentsFromChunk].slice(-30);
