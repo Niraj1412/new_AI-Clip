@@ -26,13 +26,14 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with authentication and cleanup
-# Add your GitHub token as a build arg
+# Add your GitHub token as a build arg (ensure it's securely provided at build time)
 ARG GITHUB_TOKEN
-RUN echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > .npmrc && \
+
+# Configure npm with GitHub Token (conditionally handle npm registry)
+RUN echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > ~/.npmrc && \
     npm config set registry https://registry.npmjs.org/ && \
     npm install --no-optional --legacy-peer-deps && \
-    rm -f .npmrc && \
+    rm -f ~/.npmrc && \
     npm cache clean --force
 
 # Copy application code
@@ -45,6 +46,8 @@ ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV TEMP_DIR=/app/tmp
 ENV OUTPUT_DIR=/app/output
 
+# Expose the necessary port
 EXPOSE 4001
 
+# Start the application
 CMD ["npm", "start"]
