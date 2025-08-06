@@ -1,24 +1,22 @@
-const OpenAI = require("openai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const dotenv = require('dotenv');
 const langdetect = require('langdetect'); // Language detection library
 dotenv.config();
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-if (!OPENAI_API_KEY) {
-    console.error('OpenAI API key is missing. Please check your .env file.');
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+    console.error('Gemini API key is missing. Please check your .env file.');
 }
 
-const openai = new OpenAI({
-    apiKey: OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true
-});
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Using free tier model
 
-// Token counting function
+// Token counting function (approximate for Gemini)
 const countTokens = (text) => Math.ceil(text.length / 4);
 
-// Create token-aware chunks
-const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
-    const reservedTokens = 5000;
+// Create token-aware chunks (adjusted for Gemini's free tier limits)
+const createTokenAwareChunks = (segments, maxTokensPerChunk = 30000) => {
+    const reservedTokens = 3000; // More conservative for Gemini
     const effectiveMaxTokens = maxTokensPerChunk - reservedTokens;
     const chunks = [];
     let currentChunk = [];
@@ -60,22 +58,34 @@ const createTokenAwareChunks = (segments, maxTokensPerChunk = 40000) => {
 // Sleep function for rate limit handling
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// OpenAI API call with retry logic
-const callOpenAIWithRetry = async (messages, model, temperature, maxRetries = 3) => {
+// Gemini API call with retry logic
+const callGeminiWithRetry = async (messages, maxRetries = 3) => {
     let retries = 0;
     while (retries <= maxRetries) {
         try {
-            const result = await openai.chat.completions.create({
-                messages: messages,
-                model: model,
-                temperature: temperature,
+            // Convert OpenAI-style messages to Gemini format
+            const prompt = convertMessagesToGeminiFormat(messages);
+            
+            const result = await model.generateContent({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.2,
+                    topK: 40,
+                    topP: 0.95,
+                    maxOutputTokens: 8192,
+                },
             });
-            return result;
+            
+            return {
+                choices: [{
+                    message: {
+                        content: result.response.text()
+                    }
+                }]
+            };
         } catch (error) {
-            if (error.error?.code === 'rate_limit_exceeded' && retries < maxRetries) {
-                const retryAfterMs = error.headers?.['retry-after-ms']
-                    ? parseInt(error.headers['retry-after-ms'])
-                    : Math.pow(2, retries) * 1000;
+            if ((error.message?.includes('quota') || error.message?.includes('rate')) && retries < maxRetries) {
+                const retryAfterMs = Math.pow(2, retries) * 1000;
                 console.log(`Rate limit reached. Retrying in ${retryAfterMs / 1000} seconds...`);
                 await sleep(retryAfterMs);
                 retries++;
@@ -84,6 +94,23 @@ const callOpenAIWithRetry = async (messages, model, temperature, maxRetries = 3)
             }
         }
     }
+};
+
+// Convert OpenAI-style messages to a single prompt for Gemini
+const convertMessagesToGeminiFormat = (messages) => {
+    let prompt = "";
+    
+    for (const message of messages) {
+        if (message.role === "system") {
+            prompt += `SYSTEM: ${message.content}\n\n`;
+        } else if (message.role === "user") {
+            prompt += `USER: ${message.content}\n\n`;
+        } else if (message.role === "assistant") {
+            prompt += `ASSISTANT: ${message.content}\n\n`;
+        }
+    }
+    
+    return prompt.trim();
 };
 
 // Language Detection
@@ -167,7 +194,7 @@ const generateClips = async (req, res) => {
         }
         const isEndPart = /end|last/i.test(customPrompt);
 
-        const transcriptChunks = createTokenAwareChunks(segments, 40000);
+        const transcriptChunks = createTokenAwareChunks(segments, 30000);
         console.log(`Split segments into ${transcriptChunks.length} token-aware chunks`);
 
         let potentialSegments = [];
@@ -260,7 +287,7 @@ ${JSON.stringify(chunk, null, 2)}`;
             messages.push({ role: "user", content: chunkPrompt });
 
             console.log(`Processing chunk ${i + 1}/${transcriptChunks.length}...`);
-            const result = await callOpenAIWithRetry(messages, "gpt-4o-mini-2024-07-18", 0.2);
+            const result = await callGeminiWithRetry(messages);
             const responseContent = result.choices[0].message.content;
 
             if (isLastChunk) {
