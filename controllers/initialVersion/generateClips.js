@@ -58,7 +58,7 @@ const createTokenAwareChunks = (segments, maxTokensPerChunk = 30000) => {
 // Sleep function for rate limit handling
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Gemini API call with retry logic
+// Gemini API call with retry logic and quota handling
 const callGeminiWithRetry = async (messages, maxRetries = 3) => {
     let retries = 0;
     while (retries <= maxRetries) {
@@ -84,11 +84,26 @@ const callGeminiWithRetry = async (messages, maxRetries = 3) => {
                 }]
             };
         } catch (error) {
-            if ((error.message?.includes('quota') || error.message?.includes('rate')) && retries < maxRetries) {
-                const retryAfterMs = Math.pow(2, retries) * 1000;
-                console.log(`Rate limit reached. Retrying in ${retryAfterMs / 1000} seconds...`);
-                await sleep(retryAfterMs);
-                retries++;
+            // Check if it's a quota error
+            if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate')) {
+                if (retries < maxRetries) {
+                    // Extract retry delay from error if available
+                    let retryAfterMs = Math.pow(2, retries) * 1000;
+                    
+                    // Try to parse retry delay from error details
+                    if (error.errorDetails) {
+                        const retryInfo = error.errorDetails.find(detail => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
+                        if (retryInfo && retryInfo.retryDelay) {
+                            retryAfterMs = parseInt(retryInfo.retryDelay) * 1000;
+                        }
+                    }
+                    
+                    console.log(`Quota/Rate limit reached. Retrying in ${retryAfterMs / 1000} seconds... (Attempt ${retries + 1}/${maxRetries})`);
+                    await sleep(retryAfterMs);
+                    retries++;
+                } else {
+                    throw new Error(`Quota exceeded after ${maxRetries} retries. Please try again later or upgrade your plan.`);
+                }
             } else {
                 throw error;
             }
@@ -142,6 +157,45 @@ Text to translate: "${text}"`;
     }
 };
 
+// Generate fallback clips without AI processing
+const generateFallbackClips = (segments, videoDuration, explicitDuration, isEndPart, customPrompt) => {
+    const clipCount = 5; // Default to 5 clips
+    const clipDuration = explicitDuration || 10; // Default to 10s if not specified
+    const fallbackClips = [];
+    
+    // Determine start position based on customPrompt
+    let startPosition = 0;
+    if (isEndPart) {
+        startPosition = videoDuration * 0.8; // Start from last 20%
+    }
+    
+    const availableDuration = videoDuration - startPosition;
+    const interval = availableDuration / clipCount;
+    
+    for (let j = 0; j < clipCount; j++) {
+        const startTime = startPosition + (interval * j);
+        const endTime = Math.min(startTime + clipDuration, videoDuration);
+        
+        // Find segments that fall within this time range
+        const relevantSegments = segments.filter(s => 
+            s.startTime >= startTime && s.endTime <= endTime
+        );
+        
+        const fallbackText = relevantSegments.length > 0 
+            ? relevantSegments.map(s => s.text).join(' ')
+            : "No transcript available for this time range";
+        
+        fallbackClips.push({
+            videoId: segments[0]?.videoId || "unknown",
+            transcriptText: fallbackText,
+            startTime: startTime.toFixed(2),
+            endTime: endTime.toFixed(2)
+        });
+    }
+    
+    return fallbackClips;
+};
+
 // Enhanced validation function
 const validateClips = (clips, videoDuration, explicitDuration, isEndPart) => {
     if (clips.length < 3 || clips.length > 8) {
@@ -190,12 +244,29 @@ const generateClips = async (req, res) => {
         const videoDuration = videoTranscript.duration;
         const segments = videoTranscript.segments;
 
-        // Detect language for each segment
+        // Detect language for each segment (with quota optimization)
+        let translationCount = 0;
+        const maxTranslations = process.env.DISABLE_TRANSLATION === 'true' ? 0 : 10; // Option to disable translation entirely
+        
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
+            
+            // Skip translation if we've already done too many
+            if (translationCount >= maxTranslations) {
+                console.log(`Skipping translation for segment ${i} - quota limit reached`);
+                continue;
+            }
+            
             const language = detectLanguage(segment.text);
             if (language !== 'en') {
-                segment.text = await translateText(segment.text, 'en');
+                try {
+                    segment.text = await translateText(segment.text, 'en');
+                    translationCount++;
+                    console.log(`Translated segment ${i} (${translationCount}/${maxTranslations})`);
+                } catch (error) {
+                    console.warn(`Translation failed for segment ${i}, keeping original text`);
+                    // Keep original text if translation fails
+                }
             }
         }
 
@@ -302,8 +373,26 @@ ${JSON.stringify(chunk, null, 2)}`;
             messages.push({ role: "user", content: chunkPrompt });
 
             console.log(`Processing chunk ${i + 1}/${transcriptChunks.length}...`);
-            const result = await callGeminiWithRetry(messages);
-            const responseContent = result.choices[0].message.content;
+            let result;
+            let responseContent;
+            
+            try {
+                result = await callGeminiWithRetry(messages);
+                responseContent = result.choices[0].message.content;
+            } catch (error) {
+                if (error.message?.includes('Quota exceeded')) {
+                    console.error('Quota exceeded - using fallback clip generation');
+                    // Generate fallback clips without AI processing
+                    const fallbackClips = generateFallbackClips(segments, videoDuration, explicitDuration, isEndPart, customPrompt);
+                    return res.status(200).json({
+                        success: true,
+                        data: { script: JSON.stringify(fallbackClips) },
+                        message: "Video script generated using fallback method due to quota limits"
+                    });
+                } else {
+                    throw error;
+                }
+            }
 
             if (isLastChunk) {
                 console.log("Final response received");
