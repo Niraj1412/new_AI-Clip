@@ -119,12 +119,27 @@ const detectLanguage = (text) => {
     return detected[0] ? detected[0][0] : 'en'; // Returns detected language code (en for English)
 };
 
-// Translation function (use your preferred translation API here)
+// Translation function using Gemini
 const translateText = async (text, targetLang = 'en') => {
-    // Example with Google Translate API or any other translation service
-    // Ensure you have a working translation service
-    const translatedText = await externalTranslateAPI(text, targetLang);
-    return translatedText;
+    try {
+        const prompt = `Translate the following text to ${targetLang}. Return only the translated text without any additional formatting or explanations:
+
+Text to translate: "${text}"`;
+
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 1000,
+            },
+        });
+        
+        return result.response.text().trim();
+    } catch (error) {
+        console.warn(`Translation failed for text: "${text.substring(0, 50)}..."`, error.message);
+        // Return original text if translation fails
+        return text;
+    }
 };
 
 // Enhanced validation function
