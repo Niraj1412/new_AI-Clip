@@ -220,34 +220,76 @@ const generateFallbackClips = (segments, videoDuration, explicitDuration, isEndP
     const clipDuration = explicitDuration || 10; // Default to 10s if not specified
     const fallbackClips = [];
     
+    // Try to understand the request for better fallback
+    const isDramatic = /dramatic|tension|thrilling|intense/i.test(customPrompt);
+    const isTeaser = /teaser|preview|highlight/i.test(customPrompt);
+    const isTransition = /transition|flow|sequence/i.test(customPrompt);
+    
+    console.log(`Fallback mode - Request analysis: dramatic=${isDramatic}, teaser=${isTeaser}, transition=${isTransition}`);
+    
     // Determine start position based on customPrompt
     let startPosition = 0;
     if (isEndPart) {
         startPosition = videoDuration * 0.8; // Start from last 20%
     }
     
+    // Ensure minimum gap between clips (0.5 seconds)
+    const minGap = 0.5;
+    const totalGaps = clipCount - 1;
+    const totalGapTime = totalGaps * minGap;
+    const totalClipTime = clipCount * clipDuration;
     const availableDuration = videoDuration - startPosition;
-    const interval = availableDuration / clipCount;
     
-    for (let j = 0; j < clipCount; j++) {
-        const startTime = startPosition + (interval * j);
-        const endTime = Math.min(startTime + clipDuration, videoDuration);
+    // Check if we have enough time
+    if (totalClipTime + totalGapTime > availableDuration) {
+        // Adjust clip duration to fit
+        const adjustedClipDuration = Math.max(3, (availableDuration - totalGapTime) / clipCount);
+        console.log(`Adjusted clip duration to ${adjustedClipDuration.toFixed(2)}s to fit available time`);
         
-        // Find segments that fall within this time range
-        const relevantSegments = segments.filter(s => 
-            s.startTime >= startTime && s.endTime <= endTime
-        );
+        for (let j = 0; j < clipCount; j++) {
+            const startTime = startPosition + (j * (adjustedClipDuration + minGap));
+            const endTime = Math.min(startTime + adjustedClipDuration, videoDuration);
+            
+            // Find segments that fall within this time range
+            const relevantSegments = segments.filter(s => 
+                s.startTime >= startTime && s.endTime <= endTime
+            );
+            
+            const fallbackText = relevantSegments.length > 0 
+                ? relevantSegments.map(s => s.text).join(' ')
+                : "No transcript available for this time range";
+            
+            fallbackClips.push({
+                videoId: segments[0]?.videoId || "unknown",
+                transcriptText: fallbackText,
+                startTime: startTime.toFixed(2),
+                endTime: endTime.toFixed(2)
+            });
+        }
+    } else {
+        // Use original approach with proper gaps
+        const interval = (availableDuration - totalGapTime) / clipCount;
         
-        const fallbackText = relevantSegments.length > 0 
-            ? relevantSegments.map(s => s.text).join(' ')
-            : "No transcript available for this time range";
-        
-        fallbackClips.push({
-            videoId: segments[0]?.videoId || "unknown",
-            transcriptText: fallbackText,
-            startTime: startTime.toFixed(2),
-            endTime: endTime.toFixed(2)
-        });
+        for (let j = 0; j < clipCount; j++) {
+            const startTime = startPosition + (j * (interval + minGap));
+            const endTime = Math.min(startTime + clipDuration, videoDuration);
+            
+            // Find segments that fall within this time range
+            const relevantSegments = segments.filter(s => 
+                s.startTime >= startTime && s.endTime <= endTime
+            );
+            
+            const fallbackText = relevantSegments.length > 0 
+                ? relevantSegments.map(s => s.text).join(' ')
+                : "No transcript available for this time range";
+            
+            fallbackClips.push({
+                videoId: segments[0]?.videoId || "unknown",
+                transcriptText: fallbackText,
+                startTime: startTime.toFixed(2),
+                endTime: endTime.toFixed(2)
+            });
+        }
     }
     
     return fallbackClips;
@@ -303,7 +345,10 @@ const generateClips = async (req, res) => {
 
         // Detect language for each segment (with quota optimization)
         let translationCount = 0;
-        const maxTranslations = process.env.DISABLE_TRANSLATION === 'true' ? 0 : 10; // Option to disable translation entirely
+        const maxTranslations = process.env.DISABLE_TRANSLATION === 'true' ? 0 : 5; // Reduced from 10 to 5 to save quota
+        
+        console.log(`Translation enabled: ${maxTranslations > 0 ? 'Yes' : 'No'}`);
+        console.log(`Available API keys: ${apiKeys.length}`);
         
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
@@ -461,26 +506,8 @@ ${JSON.stringify(chunk, null, 2)}`;
                     validateClips(clips, videoDuration, explicitDuration, isEndPart);
                 } catch (error) {
                     console.error("Validation failed:", error.message);
-                    // Fallback to generate 3 to 8 clips
-                    const fallbackClips = [];
-                    const clipCount = 5; // Default to 5 clips in fallback
-                    const clipDuration = explicitDuration || 10; // Default to 10s if not specified
-                    const interval = videoDuration / clipCount;
-                    for (let j = 0; j < clipCount; j++) {
-                        const startTime = (interval * j);
-                        const endTime = Math.min(startTime + clipDuration, videoDuration);
-                        const fallbackText = segments
-                            .filter(s => s.startTime >= startTime && s.endTime <= endTime)
-                            .map(s => s.text)
-                            .join(' ');
-                        fallbackClips.push({
-                            videoId: videoTranscript.videoId || segments[0].videoId,
-                            transcriptText: fallbackText || "No transcript available",
-                            startTime: startTime.toFixed(2),
-                            endTime: endTime.toFixed(2)
-                        });
-                    }
-                    clips = fallbackClips;
+                    // Use the improved fallback system
+                    clips = generateFallbackClips(segments, videoDuration, explicitDuration, isEndPart, customPrompt);
                 }
 
                 return res.status(200).json({
