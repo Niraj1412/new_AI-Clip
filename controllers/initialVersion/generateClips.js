@@ -3,13 +3,44 @@ const dotenv = require('dotenv');
 const langdetect = require('langdetect'); // Language detection library
 dotenv.config();
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-if (!GEMINI_API_KEY) {
-    console.error('Gemini API key is missing. Please check your .env file.');
-}
+// Support for multiple API keys to handle quota limits
+const getGeminiAPIKeys = () => {
+    const keys = [];
+    
+    // Primary key
+    if (process.env.GEMINI_API_KEY) {
+        keys.push(process.env.GEMINI_API_KEY);
+    }
+    
+    // Additional keys (GEMINI_API_KEY_2, GEMINI_API_KEY_3, etc.)
+    for (let i = 2; i <= 5; i++) {
+        const key = process.env[`GEMINI_API_KEY_${i}`];
+        if (key) {
+            keys.push(key);
+        }
+    }
+    
+    if (keys.length === 0) {
+        console.error('No Gemini API keys found. Please check your .env file.');
+        throw new Error('No Gemini API keys available');
+    }
+    
+    return keys;
+};
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Using free tier model
+const apiKeys = getGeminiAPIKeys();
+let currentKeyIndex = 0;
+
+const getNextAPIKey = () => {
+    const key = apiKeys[currentKeyIndex];
+    currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
+    return key;
+};
+
+const createGeminiModel = (apiKey) => {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+};
 
 // Token counting function (approximate for Gemini)
 const countTokens = (text) => Math.ceil(text.length / 4);
@@ -61,10 +92,16 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // Gemini API call with retry logic and quota handling
 const callGeminiWithRetry = async (messages, maxRetries = 3) => {
     let retries = 0;
+    let keyIndex = 0;
+    
     while (retries <= maxRetries) {
         try {
             // Convert OpenAI-style messages to Gemini format
             const prompt = convertMessagesToGeminiFormat(messages);
+            
+            // Try with current API key
+            const currentKey = apiKeys[keyIndex];
+            const model = createGeminiModel(currentKey);
             
             const result = await model.generateContent({
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -86,23 +123,30 @@ const callGeminiWithRetry = async (messages, maxRetries = 3) => {
         } catch (error) {
             // Check if it's a quota error
             if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate')) {
-                if (retries < maxRetries) {
-                    // Extract retry delay from error if available
-                    let retryAfterMs = Math.pow(2, retries) * 1000;
-                    
-                    // Try to parse retry delay from error details
-                    if (error.errorDetails) {
-                        const retryInfo = error.errorDetails.find(detail => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
-                        if (retryInfo && retryInfo.retryDelay) {
-                            retryAfterMs = parseInt(retryInfo.retryDelay) * 1000;
+                // Try next API key if available
+                keyIndex = (keyIndex + 1) % apiKeys.length;
+                
+                if (keyIndex === 0) {
+                    // We've tried all keys, now retry with delay
+                    if (retries < maxRetries) {
+                        let retryAfterMs = Math.pow(2, retries) * 1000;
+                        
+                        // Try to parse retry delay from error details
+                        if (error.errorDetails) {
+                            const retryInfo = error.errorDetails.find(detail => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
+                            if (retryInfo && retryInfo.retryDelay) {
+                                retryAfterMs = parseInt(retryInfo.retryDelay) * 1000;
+                            }
                         }
+                        
+                        console.log(`All API keys quota exceeded. Retrying in ${retryAfterMs / 1000} seconds... (Attempt ${retries + 1}/${maxRetries})`);
+                        await sleep(retryAfterMs);
+                        retries++;
+                    } else {
+                        throw new Error(`All API keys quota exceeded after ${maxRetries} retries. Please try again later or add more API keys.`);
                     }
-                    
-                    console.log(`Quota/Rate limit reached. Retrying in ${retryAfterMs / 1000} seconds... (Attempt ${retries + 1}/${maxRetries})`);
-                    await sleep(retryAfterMs);
-                    retries++;
                 } else {
-                    throw new Error(`Quota exceeded after ${maxRetries} retries. Please try again later or upgrade your plan.`);
+                    console.log(`Switching to API key ${keyIndex + 1}/${apiKeys.length} due to quota limit`);
                 }
             } else {
                 throw error;
@@ -134,27 +178,40 @@ const detectLanguage = (text) => {
     return detected[0] ? detected[0][0] : 'en'; // Returns detected language code (en for English)
 };
 
-// Translation function using Gemini
+// Translation function using Gemini with rotating API keys
 const translateText = async (text, targetLang = 'en') => {
-    try {
-        const prompt = `Translate the following text to ${targetLang}. Return only the translated text without any additional formatting or explanations:
+    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+        try {
+            const prompt = `Translate the following text to ${targetLang}. Return only the translated text without any additional formatting or explanations:
 
 Text to translate: "${text}"`;
 
-        const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 1000,
-            },
-        });
-        
-        return result.response.text().trim();
-    } catch (error) {
-        console.warn(`Translation failed for text: "${text.substring(0, 50)}..."`, error.message);
-        // Return original text if translation fails
-        return text;
+            const currentKey = apiKeys[keyIndex];
+            const model = createGeminiModel(currentKey);
+
+            const result = await model.generateContent({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.1,
+                    maxOutputTokens: 1000,
+                },
+            });
+            
+            return result.response.text().trim();
+        } catch (error) {
+            if (error.status === 429 || error.message?.includes('quota')) {
+                console.log(`Translation failed with key ${keyIndex + 1}, trying next key...`);
+                continue; // Try next key
+            } else {
+                console.warn(`Translation failed for text: "${text.substring(0, 50)}..."`, error.message);
+                return text; // Return original text for non-quota errors
+            }
+        }
     }
+    
+    // If all keys failed, return original text
+    console.warn(`All API keys failed for translation, keeping original text`);
+    return text;
 };
 
 // Generate fallback clips without AI processing
