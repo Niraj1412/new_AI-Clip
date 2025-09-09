@@ -7,20 +7,65 @@ const ytdl = require('ytdl-core');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const { v4: uuidv4 } = require('uuid');
+const { protect } = require('../middleware/authMiddleware');
 
 // Configure FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Create directories if they don't exist
-const downloadsDir = path.join(__dirname, '../downloads');
-const clipsDir = path.join(__dirname, '../clips');
+let downloadsDir = path.join(__dirname, '../downloads');
+let clipsDir = path.join(__dirname, '../clips');
 
-if (!fs.existsSync(downloadsDir)) {
-  fs.mkdirSync(downloadsDir, { recursive: true });
+console.log('Creating directories:');
+console.log(`  downloadsDir: ${downloadsDir}`);
+console.log(`  clipsDir: ${clipsDir}`);
+
+try {
+  if (!fs.existsSync(downloadsDir)) {
+    fs.mkdirSync(downloadsDir, { recursive: true });
+    console.log('Downloads directory created successfully');
+  }
+} catch (error) {
+  console.error('Failed to create downloads directory:', error);
+  
+  // Try fallback to current working directory
+  try {
+    console.log('Attempting fallback downloads directory creation...');
+    const fallbackDownloadsDir = path.join(process.cwd(), 'downloads');
+    if (!fs.existsSync(fallbackDownloadsDir)) {
+      fs.mkdirSync(fallbackDownloadsDir, { recursive: true });
+      console.log(`Created fallback downloads directory: ${fallbackDownloadsDir}`);
+    }
+    // Update the downloadsDir variable to use fallback
+    downloadsDir = fallbackDownloadsDir;
+  } catch (fallbackError) {
+    console.error('Fallback downloads directory creation also failed:', fallbackError);
+    throw new Error(`Failed to create downloads directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+  }
 }
 
-if (!fs.existsSync(clipsDir)) {
-  fs.mkdirSync(clipsDir, { recursive: true });
+try {
+  if (!fs.existsSync(clipsDir)) {
+    fs.mkdirSync(clipsDir, { recursive: true });
+    console.log('Clips directory created successfully');
+  }
+} catch (error) {
+  console.error('Failed to create clips directory:', error);
+  
+  // Try fallback to current working directory
+  try {
+    console.log('Attempting fallback clips directory creation...');
+    const fallbackClipsDir = path.join(process.cwd(), 'clips');
+    if (!fs.existsSync(fallbackClipsDir)) {
+      fs.mkdirSync(fallbackClipsDir, { recursive: true });
+      console.log(`Created fallback clips directory: ${fallbackClipsDir}`);
+    }
+    // Update the clipsDir variable to use fallback
+    clipsDir = fallbackClipsDir;
+  } catch (fallbackError) {
+    console.error('Fallback clips directory creation also failed:', fallbackError);
+    throw new Error(`Failed to create clips directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+  }
 }
 
 // Helper function to clean up files
@@ -35,7 +80,7 @@ const cleanUpFiles = (filePaths) => {
 };
 
 // API endpoint to process video clips
-router.post('/process-video', async (req, res) => {
+router.post('/process-video', protect, async (req, res) => {
   try {
     const { videoId, startTime, endTime } = req.body;
     
@@ -56,10 +101,29 @@ router.post('/process-video', async (req, res) => {
 
     const duration = endTime - startTime;
     if (duration > 600) { // Limit to 10 minutes max
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Clip duration cannot exceed 10 minutes' 
+      return res.status(400).json({
+        success: false,
+        message: 'Clip duration cannot exceed 10 minutes'
       });
+    }
+
+    // Check user plan limits for free users
+    const user = req.user;
+    if (user.planType === 'free') {
+      // Check duration limit (5 minutes for free users)
+      if (duration > 300) { // 5 minutes = 300 seconds
+        return res.status(400).json({
+          success: false,
+          message: 'Free plan limit exceeded',
+          details: {
+            limitType: 'duration',
+            maxDuration: 300,
+            currentDuration: duration,
+            planType: user.planType,
+            upgradeRequired: true
+          }
+        });
+      }
     }
 
     console.log(`Processing video ${videoId} from ${startTime}s to ${endTime}s`);
@@ -84,17 +148,35 @@ router.post('/process-video', async (req, res) => {
 
     // Process the video with FFmpeg
     console.log('Trimming video...');
+
+    // Set encoding options based on user plan
+    let encodingOptions = [
+      '-c:v libx264', // Video codec
+      '-c:a aac',     // Audio codec
+      '-movflags faststart', // For streaming
+      '-preset fast'  // Faster encoding
+    ];
+
+    if (user.planType === 'free') {
+      // Free users get 720p quality
+      encodingOptions.push(
+        '-vf scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2', // Scale to 720p
+        '-crf 28'  // Quality setting for 720p
+      );
+      console.log('Applying 720p quality limit for free user');
+    } else {
+      // Paid users get higher quality
+      encodingOptions.push(
+        '-crf 23'  // Higher quality for paid users
+      );
+      console.log('Applying high quality for paid user');
+    }
+
     await new Promise((resolve, reject) => {
       ffmpeg(tempFilePath)
         .setStartTime(startTime)
         .setDuration(duration)
-        .outputOptions([
-          '-c:v libx264', // Video codec
-          '-c:a aac',     // Audio codec
-          '-movflags faststart', // For streaming
-          '-preset fast', // Faster encoding
-          '-crf 28'       // Quality (lower is better)
-        ])
+        .outputOptions(encodingOptions)
         .on('end', () => {
           console.log('Video processing finished');
           resolve();

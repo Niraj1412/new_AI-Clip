@@ -69,11 +69,11 @@ nano .env
 Ensure you update the following critical variables:
 
 ```
-MONGODB_URL=<your-mongodb-connection-string>
+MONGODB_URI=<your-mongodb-connection-string>
 MONGODB_URI=<your-mongodb-connection-string>
 ALLOWED_ORIGINS=<your-frontend-domain>
 OPENAI_API_KEY=<your-openai-api-key>
-YOUTUBE_API_KEY=<your-youtube-api-key>
+YOUTUBE_API_KEY_B=<your-youtube-api-key>
 JWT_SECRET=<your-random-secret-string>
 ```
 

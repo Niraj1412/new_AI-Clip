@@ -3,6 +3,7 @@ const { OAuth2Client } = require("google-auth-library");
 const { axiosWithProxy } = require("../utils/axiosWithProxy");
 const User = require("../model/usersSchema");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -20,8 +21,16 @@ const signinUserWithPassword = async (req, res) => {
       });
     }
     
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        status: false,
+        message: "Database connection unavailable. Please try again later."
+      });
+    }
+    
     // Find user by email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).maxTimeMS(10000);
     if (!user) {
       return res.status(401).json({ 
         status: false,
@@ -98,7 +107,7 @@ const signinUserWithGoogle = async (req, res) => {
     const { email, name, picture, sub } = ticket.getPayload();
     
     // Check if user exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ email }).maxTimeMS(30000);
 
     if (user) {
       // Update existing user with Google info if they haven't used Google before
@@ -109,7 +118,7 @@ const signinUserWithGoogle = async (req, res) => {
         if (!user.profilePicture && picture) {
           user.profilePicture = picture;
         }
-        await user.save();
+        await user.save({ maxTimeMS: 30000 });
       }
     } else {
       // Create new user
@@ -168,8 +177,8 @@ const signinUserWithGithub = async (req, res) => {
     
     // Exchange code for access token - using standard axiosWithProxy (which is now just regular axios)
     const tokenResponse = await axiosWithProxy.post('https://github.com/login/oauth/access_token', {
-      client_id: process.env.GITHUB_CLIENT_ID,
-      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      client_id: process.env.CLIENT_SECRET_GITHUB,
+      client_secret: process.env.CLIENT_SECRET_GITHUB,
       code: code
     }, {
       headers: {
@@ -218,7 +227,7 @@ const signinUserWithGithub = async (req, res) => {
     const githubName = name || login;
 
     // Find or create user
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ email }).maxTimeMS(30000);
 
     if (user) {
       // Update existing user with GitHub info
@@ -229,7 +238,7 @@ const signinUserWithGithub = async (req, res) => {
         if (!user.profilePicture && avatar_url) {
           user.profilePicture = avatar_url;
         }
-        await user.save();
+        await user.save({ maxTimeMS: 30000 });
       }
     } else {
       // Create new user
@@ -334,11 +343,11 @@ const signinUserWithTwitter = async (req, res) => {
     const { name, profile_image_url_https } = userResponse.data;
     
     // Generate a more unique email since Twitter doesn't provide one
-    const email = `twitter-${id}@${process.env.EMAIL_DOMAIN || 'https://clip-frontend-three.vercel.app/'}`;
+    const email = `twitter-${id}@${process.env.EMAIL_DOMAIN || 'https://clipsmartai.com/'}`;
     const profilePicture = profile_image_url_https?.replace('_normal', ''); // Get higher res image
 
     // Find or create user
-    let user = await User.findOne({ $or: [{ email }, { twitterId: id }] });
+    let user = await User.findOne({ $or: [{ email }, { twitterId: id }] }).maxTimeMS(30000);
 
     if (user) {
       // Update existing user with Twitter info
@@ -349,7 +358,7 @@ const signinUserWithTwitter = async (req, res) => {
         if (!user.profilePicture && profilePicture) {
           user.profilePicture = profilePicture;
         }
-        await user.save();
+        await user.save({ maxTimeMS: 30000 });
       }
     } else {
       // Create new user

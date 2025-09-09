@@ -1,4 +1,6 @@
 // Configuration settings based on environment
+const { getSafeOutputDir, getSafeTempDir } = require('./utils/pathUtils');
+
 const config = {
   // Server settings
   port: process.env.PORT || 4001,
@@ -10,14 +12,26 @@ const config = {
   
   // AWS configuration
   aws: {
-    region: process.env.AWS_REGION || 'us-east-1',
-    s3Bucket: process.env.AWS_S3_BUCKET || 'your-default-bucket-name',
+    region: process.env.AWS_REGION_B || 'us-east-1',
+    s3Bucket: process.env.AWS_S3_BUCKET_B || 'your-default-bucket-name',
+  },
+
+  // Stripe configuration
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    prices: {
+      basic: process.env.STRIPE_PRICE_BASIC || 'price_basic_monthly',
+      pro: process.env.STRIPE_PRICE_PRO || 'price_pro_monthly',
+      enterprise: process.env.STRIPE_PRICE_ENTERPRISE || 'price_enterprise_monthly'
+    }
   },
   
-  // Paths
+  // Paths - using safe path utilities
   paths: {
-    tempDir: process.env.TEMP_DIR || './tmp',
-    outputDir: process.env.OUTPUT_DIR || './output',
+    tempDir: getSafeTempDir(),
+    outputDir: getSafeOutputDir(),
   },
   
   // CORS settings

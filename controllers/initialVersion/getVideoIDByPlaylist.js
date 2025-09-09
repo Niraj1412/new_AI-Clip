@@ -6,7 +6,7 @@ const getVideoIDByPlaylist = async (req, res) => {
         const { playlistId } = req.params;
         console.log("Fetching playlist:", playlistId);
 
-        if (!process.env.YOUTUBE_API_KEY) {
+        if (!process.env.YOUTUBE_API_KEY_B) {
             return res.status(400).json({
                 message: "YouTube API key is not configured",
                 status: false
@@ -26,7 +26,7 @@ const getVideoIDByPlaylist = async (req, res) => {
             }
 
             const response = await youtube.playlistItems.list({
-                key: process.env.YOUTUBE_API_KEY,
+                key: process.env.YOUTUBE_API_KEY_B,
                 part: 'contentDetails',
                 playlistId: playlistId,
                 maxResults: 50,

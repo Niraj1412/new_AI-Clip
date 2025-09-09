@@ -36,7 +36,7 @@ const sendContactEmail = async (req, res) => {
     // Email options
     const mailOptions = {
       from: `"${name}" <${email}>`,
-      to: 'contact@clipsmart.ai',
+      to: 'contact@clipsmartai.com',
       subject: `Contact Form: ${subject}`,
       html: `
         <h2>New Contact Form Submission</h2>

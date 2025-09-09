@@ -23,8 +23,32 @@ const generateThumbnail = (videoPath, outputPath) => {
 
     // Ensure output directory exists
     const outputDir = path.dirname(outputPath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
+    console.log(`Creating output directory: ${outputDir}`);
+    
+    try {
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log('Output directory created successfully');
+      }
+    } catch (error) {
+      console.error('Failed to create output directory:', error);
+      
+      // Try fallback to current working directory
+      try {
+        console.log('Attempting fallback output directory creation...');
+        const fallbackOutputDir = path.join(process.cwd(), 'thumbnails');
+        if (!fs.existsSync(fallbackOutputDir)) {
+          fs.mkdirSync(fallbackOutputDir, { recursive: true });
+          console.log(`Created fallback output directory: ${fallbackOutputDir}`);
+        }
+        // Update the outputPath to use fallback
+        const fallbackOutputPath = path.join(fallbackOutputDir, path.basename(outputPath));
+        outputPath = fallbackOutputPath;
+        console.log(`Using fallback output path: ${outputPath}`);
+      } catch (fallbackError) {
+        console.error('Fallback output directory creation also failed:', fallbackError);
+        throw new Error(`Failed to create output directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+      }
     }
 
     console.log(`Generating thumbnail for: ${videoPath}`);

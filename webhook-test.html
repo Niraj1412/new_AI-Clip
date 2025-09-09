@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webhook Test Tool</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        .test-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e9ecef;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ced4da;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            width: 100%;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Webhook Test Tool</h1>
+
+        <div class="test-section">
+            <h3>🧪 Test Webhook Processing</h3>
+            <p>Use this tool to test if your webhook is working properly. Enter the user ID and select the event type to simulate.</p>
+
+            <div class="form-group">
+                <label for="userId">User ID:</label>
+                <input type="text" id="userId" placeholder="Enter user ID (e.g., 68b088b0936e57169e3f0bfc)" required>
+            </div>
+
+            <div class="form-group">
+                <label for="eventType">Event Type:</label>
+                <select id="eventType" required>
+                    <option value="checkout.session.completed">Checkout Session Completed</option>
+                    <option value="customer.subscription.created">Subscription Created</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="planType">Plan Type:</label>
+                <select id="planType">
+                    <option value="pro">Pro Plan</option>
+                    <option value="enterprise">Enterprise Plan</option>
+                    <option value="free">Free Plan</option>
+                </select>
+            </div>
+
+            <button onclick="testWebhook()">🚀 Test Webhook</button>
+
+            <div id="result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="grid">
+            <div class="test-section">
+                <h3>🔍 Check Debug Endpoint</h3>
+                <p>Check if your webhook configuration is properly set up.</p>
+                <button onclick="checkDebug()">📊 Check Debug Info</button>
+                <div id="debugResult" class="result" style="display: none;"></div>
+            </div>
+
+            <div class="test-section">
+                <h3>🔧 Fix Inactive Users</h3>
+                <p>Automatically fix users who have paid but still show inactive status.</p>
+                <button onclick="fixInactiveUsers()">🛠️ Fix Inactive Users</button>
+                <div id="fixResult" class="result" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📋 Instructions</h3>
+            <ol>
+                <li><strong>Test the webhook:</strong> Enter a user ID and click "Test Webhook"</li>
+                <li><strong>Check configuration:</strong> Click "Check Debug Info" to verify setup</li>
+                <li><strong>Fix existing issues:</strong> Click "Fix Inactive Users" to update old payments</li>
+                <li><strong>Verify in Stripe:</strong> Check your Stripe Dashboard webhooks are configured correctly</li>
+            </ol>
+
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 6px; margin-top: 15px;">
+                <strong>⚠️ Important:</strong> Make sure your Stripe webhook is configured with URL:
+                <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace;">
+                    https://clipsmartai.com/api-node/api/v1/payments/webhook
+                </code>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://clipsmartai.com/api-node/api/v1/payments';
+
+        async function testWebhook() {
+            const userId = document.getElementById('userId').value.trim();
+            const eventType = document.getElementById('eventType').value;
+            const planType = document.getElementById('planType').value;
+            const resultDiv = document.getElementById('result');
+
+            if (!userId) {
+                showResult('Please enter a user ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/test-webhook-manual`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        eventType,
+                        userId,
+                        planType
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showResult(`✅ Success!\n${data.message}\n\nEvent processed for user: ${userId}\nPlan: ${planType}`, 'success');
+                } else {
+                    showResult(`❌ Failed: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkDebug() {
+            const resultDiv = document.getElementById('debugResult');
+
+            try {
+                const response = await fetch(`${API_BASE}/debug`);
+                const data = await response.json();
+
+                let result = '📊 Debug Information:\n\n';
+                result += `Stripe Configured: ${data.stripeConfigured ? '✅' : '❌'}\n`;
+                result += `Webhook Secret: ${data.webhookSecretConfigured ? '✅' : '❌'}\n`;
+                result += `Timestamp: ${data.timestamp}\n\n`;
+                result += `Routes: ${data.routes.join(', ')}\n\n`;
+
+                if (data.setupInstructions) {
+                    result += '🔧 Setup Instructions:\n';
+                    result += `Webhook URL: ${data.setupInstructions.webhookUrl}\n`;
+                    result += `Required Events: ${data.setupInstructions.requiredEvents.join(', ')}\n`;
+                    result += `Environment Variable: ${data.setupInstructions.environmentVariable}\n`;
+                }
+
+                showResult(result, data.stripeConfigured && data.webhookSecretConfigured ? 'success' : 'error', 'debugResult');
+            } catch (error) {
+                showResult(`❌ Error checking debug: ${error.message}`, 'error', 'debugResult');
+            }
+        }
+
+        async function fixInactiveUsers() {
+            const resultDiv = document.getElementById('fixResult');
+
+            try {
+                const response = await fetch(`${API_BASE}/fix-inactive-users`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    let result = `✅ Fixed ${data.fixedCount} inactive users!\n\n`;
+                    result += `Total found: ${data.totalFound}\n`;
+                    result += `Successfully fixed: ${data.fixedCount}\n\n`;
+
+                    if (data.results && data.results.length > 0) {
+                        result += '📋 Fixed Users:\n';
+                        data.results.forEach(user => {
+                            result += `- ${user.email} (${user.userId}): ${user.oldStatus} → ${user.newStatus} (${user.planType})\n`;
+                        });
+                    }
+
+                    showResult(result, 'success', 'fixResult');
+                } else {
+                    showResult(`❌ Failed: ${data.message}`, 'error', 'fixResult');
+                }
+            } catch (error) {
+                showResult(`❌ Error: ${error.message}`, 'error', 'fixResult');
+            }
+        }
+
+        function showResult(message, type, resultId = 'result') {
+            const resultDiv = document.getElementById(resultId);
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+
+            // Scroll to result
+            resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    </script>
+</body>
+</html>

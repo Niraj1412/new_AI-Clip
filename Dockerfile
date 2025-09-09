@@ -1,53 +1,48 @@
-FROM node:22
+FROM node:20-alpine
 
-# Install system dependencies including FFmpeg and python-is-python3
-RUN apt-get update && \
-    apt-get install -y \
-    python3 \
-    python3-pip \
-    python-is-python3 \
-    ffmpeg && \
-    python --version && \
-    ffmpeg -version && \
-    rm -rf /var/lib/apt/lists/*
+# Install ffmpeg and Python for video processing and youtube-dl-exec
+RUN apk add --no-cache ffmpeg python3 py3-pip && \
+    ln -sf /usr/bin/python3 /usr/bin/python
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/backend/uploads && \
-    mkdir -p /app/uploads && \
-    mkdir -p /app/tmp && \
-    mkdir -p /app/output && \
-    chmod -R 777 /app/backend/uploads && \
-    chmod -R 777 /app/uploads && \
-    chmod -R 777 /app/tmp && \
-    chmod -R 777 /app/output
-
+# Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files first (for better layer caching)
 COPY package*.json ./
 
-# Add your GitHub token as a build arg (ensure it's securely provided at build time)
-ARG GITHUB_TOKEN
-
-# Configure npm with GitHub Token (conditionally handle npm registry)
-RUN echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > ~/.npmrc && \
-    npm config set registry https://registry.npmjs.org/ && \
-    npm install --no-optional --legacy-peer-deps && \
-    rm -f ~/.npmrc && \
+# Install dependencies with optimizations
+RUN npm ci --legacy-peer-deps && \
     npm cache clean --force
 
-# Copy application code
+# Copy application files
 COPY . .
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV UPLOADS_DIR=/app/backend/uploads
-ENV FFMPEG_PATH=/usr/bin/ffmpeg
-ENV TEMP_DIR=/app/tmp
-ENV OUTPUT_DIR=/app/output
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S backend -u 1001
 
-# Expose the necessary port
+# Create necessary directories with proper permissions BEFORE switching user
+RUN mkdir -p /app/output && \
+    mkdir -p /app/uploads && \
+    mkdir -p /app/cache && \
+    mkdir -p /app/Download && \
+    mkdir -p /app/temp && \
+    mkdir -p /tmp/clipsmart_downloads && \
+    mkdir -p /tmp/clipsmart_tmp && \
+    chown -R backend:nodejs /app && \
+    chown -R backend:nodejs /tmp/clipsmart_downloads && \
+    chown -R backend:nodejs /tmp/clipsmart_tmp
+
+# Remove development files and clean up
+RUN rm -rf node_modules/.cache && \
+    rm -rf /tmp/* && \
+    rm -rf /var/cache/apk/*
+
+# Switch to non-root user
+USER backend
+
+# Expose backend port
 EXPOSE 4001
 
-# Start the application
+# Start the backend
 CMD ["npm", "start"]

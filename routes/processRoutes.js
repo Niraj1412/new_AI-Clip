@@ -173,18 +173,23 @@ const defaultThumbnail = path.join(__dirname, '../../backend/public/default-thum
 // Supported thumbnail extensions
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
 
-router.get('/:videoId', async (req, res) => {
+router.get('/:videoId', protect, async (req, res) => {
   try {
     const { videoId } = req.params;
-    
+
     // Validate video ID format
     if (!videoId || !/^[a-f0-9]{24}$/.test(videoId)) {
       return sendDefaultThumbnail(res);
     }
 
-    // Find video document (only need thumbnailUrl)
-    const video = await Video.findById(videoId).select('thumbnailUrl').lean();
+    // Find video document and validate user ownership
+    const video = await Video.findOne({
+      _id: videoId,
+      userId: req.user._id
+    }).select('thumbnailUrl').lean();
+
     if (!video || !video.thumbnailUrl) {
+      console.log(`Thumbnail access denied: Video ${videoId} not found or user does not have permission`);
       return sendDefaultThumbnail(res);
     }
 
@@ -211,33 +216,38 @@ router.get('/:videoId', async (req, res) => {
 function findThumbnailPath(filenames) {
   const possiblePaths = [];
   
-  // Production paths (Railway)
-  if (process.env.RAILWAY_ENVIRONMENT === 'production') {
-    possiblePaths.push(
-      '/backend/thumbnails',
-      '/app/thumbnails',
-      '/backend/uploads/thumbnails',
-      '/app/uploads/thumbnails'
-    );
-  } 
-  // Development paths
-  else {
-    possiblePaths.push(
-      path.join(__dirname, '../../backend/thumbnails'),
-      path.join(__dirname, '../../uploads/thumbnails')
-    );
-  }
+  // Add all possible thumbnail locations
+  possiblePaths.push(
+    // Production Docker paths
+    '/app/backend/thumbnails',
+    '/app/thumbnails',
+    '/backend/thumbnails',
+    '/app/uploads/thumbnails',
+    '/backend/uploads/thumbnails',
+    // Development paths
+    path.join(__dirname, '../../backend/thumbnails'),
+    path.join(__dirname, '../../thumbnails'),
+    path.join(__dirname, '../../uploads/thumbnails'),
+    // Current working directory fallbacks
+    path.join(process.cwd(), 'thumbnails'),
+    path.join(process.cwd(), 'backend/thumbnails'),
+  );
+
+  console.log(`[THUMBNAIL] Searching for files:`, filenames);
+  console.log(`[THUMBNAIL] In directories:`, possiblePaths);
 
   // Check all combinations of paths and filenames
   for (const dir of possiblePaths) {
     for (const filename of filenames) {
       const fullPath = path.join(dir, filename);
       if (fs.existsSync(fullPath)) {
+        console.log(`[THUMBNAIL] Found thumbnail at: ${fullPath}`);
         return fullPath;
       }
     }
   }
   
+  console.log(`[THUMBNAIL] No thumbnail found for files:`, filenames);
   return null;
 }
 

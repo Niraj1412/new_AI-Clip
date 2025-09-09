@@ -3,12 +3,18 @@ const OpenAI = require('openai');
 const dotenv = require('dotenv');
 dotenv.config();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true
-});
+// Initialize OpenAI only if API key is available
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true
+  });
+}
 
 const generateClips = async (req, res) => {
+  const User = require('../../model/usersSchema');
+
   try {
     let details = req.body.gotDetails;
     const customization = req.body.customization;
@@ -143,10 +149,28 @@ ${JSON.stringify(details, null, 2)}`.trim();
       }
     }
 
+    // Increment usage for successful clip generation
+    try {
+      if (req.user && req.user._id) {
+        const user = await User.findById(req.user._id);
+        if (user) {
+          user.incrementClipUsage();
+          await user.save();
+          console.log(`✅ Incremented clip usage for user ${req.user._id}: ${user.usageTracking.clipsThisMonth} clips this month`);
+        }
+      }
+    } catch (usageError) {
+      console.error('Failed to increment usage:', usageError);
+    }
+
     return res.status(200).json({
       success: true,
       data: { script: JSON.stringify(clips) },
-      message: 'Clips generated successfully'
+      message: 'Clips generated successfully',
+      usage: req.limitInfo ? {
+        remainingClips: req.limitInfo.remainingClips,
+        planType: req.user?.planType || 'free'
+      } : null
     });
   } catch (error) {
     console.error('generateClips error:', error);

@@ -1,6 +1,7 @@
 const User = require("../../model/usersSchema");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 const loginUser = async (req, res) => {
     try {
@@ -16,8 +17,16 @@ const loginUser = async (req, res) => {
         
         console.log("Login attempt:", { email });
         
-        // Find user by email
-        const user = await User.findOne({ email });
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                status: false,
+                message: "Database connection unavailable. Please try again later."
+            });
+        }
+        
+        // Find user by email with timeout
+        const user = await User.findOne({ email }).maxTimeMS(10000);
         if (!user) {
             console.log("User not found:", email);
             return res.status(401).json({ 

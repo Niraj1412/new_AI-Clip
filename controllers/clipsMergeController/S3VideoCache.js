@@ -18,8 +18,32 @@ class S3VideoCache {
   }
 
   init() {
-    if (!fs.existsSync(this.cacheDir)) {
-      fs.mkdirSync(this.cacheDir, { recursive: true });
+    console.log(`Creating cache directory: ${this.cacheDir}`);
+    
+    try {
+      if (!fs.existsSync(this.cacheDir)) {
+        fs.mkdirSync(this.cacheDir, { recursive: true });
+        console.log('Cache directory created successfully');
+      }
+    } catch (error) {
+      console.error('Failed to create cache directory:', error);
+      
+      // Try fallback to current working directory
+      try {
+        console.log('Attempting fallback cache directory creation...');
+        const fallbackCacheDir = path.join(process.cwd(), 'temp', 'video_cache');
+        if (!fs.existsSync(fallbackCacheDir)) {
+          fs.mkdirSync(fallbackCacheDir, { recursive: true });
+          console.log(`Created fallback cache directory: ${fallbackCacheDir}`);
+        }
+        // Update the cacheDir and cacheFile to use fallback
+        this.cacheDir = fallbackCacheDir;
+        this.cacheFile = path.join(this.cacheDir, 's3_cache_index.json');
+        console.log(`Using fallback cache directory: ${this.cacheDir}`);
+      } catch (fallbackError) {
+        console.error('Fallback cache directory creation also failed:', fallbackError);
+        throw new Error(`Failed to create cache directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+      }
     }
     
     this.loadCacheFromDisk();

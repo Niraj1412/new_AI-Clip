@@ -34,7 +34,7 @@ const getDetailsByVideoID = async (req, res) => {
             });
         }
 
-        if (!process.env.YOUTUBE_API_KEY) {
+        if (!process.env.YOUTUBE_API_KEY_B) {
             return res.status(400).json({
                 message: "YouTube API key is not configured",
                 status: false
@@ -42,7 +42,7 @@ const getDetailsByVideoID = async (req, res) => {
         }
 
         const response = await youtube.videos.list({
-            key: process.env.YOUTUBE_API_KEY,
+            key: process.env.YOUTUBE_API_KEY_B,
             part: 'snippet,contentDetails,statistics',
             id: extractedVideoId
         });

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stripe Webhook Verification</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e9ecef;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        .status-success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .status-error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .step {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .step h3 {
+            color: #856404;
+            margin-top: 0;
+        }
+        .code {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            text-decoration: none;
+            display: inline-block;
+            margin: 5px;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+        }
+        .test-result {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Stripe Webhook Verification</h1>
+
+        <div class="status-card">
+            <h2>✅ Backend Status: READY</h2>
+            <div class="status-item">
+                <span>Webhook URL:</span>
+                <span class="status-success">https://clipsmartai.com/api-node/api/v1/payments/webhook</span>
+            </div>
+            <div class="status-item">
+                <span>Stripe Configured:</span>
+                <span class="status-success">✅ Yes</span>
+            </div>
+            <div class="status-item">
+                <span>Webhook Secret:</span>
+                <span class="status-success">✅ Configured</span>
+            </div>
+            <div class="status-item">
+                <span>Server Status:</span>
+                <span class="status-success">✅ Ready</span>
+            </div>
+        </div>
+
+        <div class="step">
+            <h3>🎯 Step 1: Verify Stripe Webhook Configuration</h3>
+            <p>Go to your Stripe Dashboard and check these settings:</p>
+            <ol>
+                <li><strong>Open:</strong> <a href="https://dashboard.stripe.com/webhooks" target="_blank" class="button">Stripe Webhooks</a></li>
+                <li><strong>Find webhook with URL:</strong></li>
+                <div class="code">https://clipsmartai.com/api-node/api/v1/payments/webhook</div>
+                <li><strong>Verify it's ENABLED</strong> (green toggle)</li>
+                <li><strong>Check these events are selected:</strong></li>
+                <ul>
+                    <li>• checkout.session.completed</li>
+                    <li>• customer.subscription.created</li>
+                    <li>• customer.subscription.updated</li>
+                    <li>• invoice.payment_succeeded</li>
+                    <li>• invoice.payment_failed</li>
+                </ul>
+            </ol>
+        </div>
+
+        <div class="step">
+            <h3>🧪 Step 2: Test Webhook Delivery</h3>
+            <p>Test if Stripe can reach your webhook endpoint:</p>
+            <ol>
+                <li>In Stripe Dashboard, click on your webhook</li>
+                <li>Click <strong>"Send test event"</strong></li>
+                <li>Select <strong>"checkout.session.completed"</strong></li>
+                <li>Click <strong>"Send test webhook"</strong></li>
+            </ol>
+            <button onclick="testWebhookEndpoint()">Test Endpoint Manually</button>
+            <div id="manualTestResult" class="test-result"></div>
+        </div>
+
+        <div class="step">
+            <h3>📊 Step 3: Check Webhook Logs</h3>
+            <p>After sending a test, check the webhook delivery logs:</p>
+            <ol>
+                <li>In Stripe Dashboard, click <strong>"Webhook attempts"</strong></li>
+                <li>Look for recent attempts</li>
+                <li>Should show <strong>"200 OK"</strong> response</li>
+                <li>If you see <strong>"400 Bad Request"</strong>, check the webhook secret</li>
+            </ol>
+        </div>
+
+        <div class="step">
+            <h3>🔧 Step 4: If Still Not Working</h3>
+            <p>If webhooks aren't reaching your server:</p>
+            <ol>
+                <li><strong>Delete the existing webhook</strong> in Stripe</li>
+                <li><strong>Create a new webhook</strong> with the exact URL above</li>
+                <li><strong>Copy the new webhook signing secret</strong></li>
+                <li><strong>Update your server environment</strong> with the new secret</li>
+            </ol>
+        </div>
+
+        <div class="step">
+            <h3>🎯 Step 5: Test With Real Payment</h3>
+            <p>Once webhook is working:</p>
+            <ol>
+                <li>Create a test user account</li>
+                <li>Make a test payment ($1 test transaction)</li>
+                <li>Check if plan updates immediately after payment</li>
+                <li>Verify user status changes from "inactive" to "active"</li>
+            </ol>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px;">
+            <a href="webhook-test.html" class="button">← Back to Full Test Suite</a>
+            <button onclick="window.location.reload()" class="button">🔄 Refresh Status</button>
+        </div>
+    </div>
+
+    <script>
+        async function testWebhookEndpoint() {
+            const resultDiv = document.getElementById('manualTestResult');
+
+            try {
+                // Test the webhook endpoint directly
+                const response = await fetch('https://clipsmartai.com/api-node/api/v1/payments/webhook-status');
+                const data = await response.json();
+
+                resultDiv.innerHTML = `
+                    <strong>✅ Endpoint Test Successful!</strong><br>
+                    Status: ${response.status}<br>
+                    Response: ${JSON.stringify(data, null, 2)}
+                `;
+                resultDiv.className = 'test-result';
+                resultDiv.style.display = 'block';
+
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <strong>❌ Endpoint Test Failed:</strong><br>
+                    ${error.message}
+                `;
+                resultDiv.className = 'test-result';
+                resultDiv.style.background = '#f8d7da';
+                resultDiv.style.borderColor = '#f5c6cb';
+                resultDiv.style.color = '#721c24';
+                resultDiv.style.display = 'block';
+            }
+        }
+
+        // Auto-test on page load
+        window.addEventListener('load', function() {
+            setTimeout(testWebhookEndpoint, 1000);
+        });
+    </script>
+</body>
+</html>

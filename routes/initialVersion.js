@@ -1,7 +1,9 @@
 const router = require("express").Router();
-const { getTranscript, getAuthUrl, oauth2Client } = require("../controllers/initialVersion/getTranscript");
+const { protect, checkClipLimits } = require("../middleware/authMiddleware");
+const { getAuthUrl, oauth2Client } = require("../controllers/initialVersion/generateClipsEnhanced");
+const generateClips = require("../controllers/initialVersion/generateClipsEnhanced");
+const { getTranscript } = require("../controllers/initialVersion/getTranscript");
 const getVideoIDByPlaylist = require("../controllers/initialVersion/getVideoIDByPlaylist");
-const generateClips = require("../controllers/initialVersion/generateClips");
 const getDetailsByVideoID = require("../controllers/initialVersion/getDetailsByVideoID");
 const { processClip } = require("../controllers/clipsMergeController/apifyMergeClips");
 const addFinalVideo = require("../controllers/initialVersion/addfinalVideo");
@@ -10,10 +12,39 @@ const getPublishedVideosByUserID = require("../controllers/publishedVideoControl
 
 // Simple test endpoint to verify connectivity
 router.get('/ping', (req, res) => {
-    res.status(200).json({ 
-        success: true, 
+    res.status(200).json({
+        success: true,
         message: 'Backend server is running',
         timestamp: new Date().toISOString()
+    });
+});
+
+// Health check for generateClips functionality
+router.get('/health/generateClips', (req, res) => {
+    const apiKeys = process.env.GEMINI_API_KEY ? ['primary'] : [];
+    for (let i = 2; i <= 5; i++) {
+        if (process.env[`GEMINI_API_KEY_${i}`]) {
+            apiKeys.push(`key_${i}`);
+        }
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'GenerateClips health check',
+        timestamp: new Date().toISOString(),
+        apiKeys: {
+            count: apiKeys.length,
+            available: apiKeys
+        },
+        environment: {
+            node_env: process.env.NODE_ENV || 'development',
+            disable_translation: process.env.DISABLE_TRANSLATION || 'false'
+        },
+        endpoints: {
+            generateClips: '/api/v1/youtube/generateClips (POST)',
+            ping: '/api/v1/youtube/ping (GET)',
+            health: '/api/v1/youtube/health/generateClips (GET)'
+        }
     });
 });
 
@@ -27,7 +58,7 @@ router.get('/oauth2callback', async (req, res) => {
     try {
         const { tokens } = await oauth2Client.getToken(code);
         oauth2Client.setCredentials(tokens);
-        res.redirect('https://clip-frontend-three.vercel.app');
+        res.redirect('https://clipsmartai.com');
     } catch (error) {
         console.error('Error getting OAuth tokens:', error);
         res.status(500).json({ error: 'Failed to authenticate' });
@@ -37,7 +68,8 @@ router.get('/oauth2callback', async (req, res) => {
 router.post("/playlist/:playlistId", getVideoIDByPlaylist);
 router.post("/video/:videoId", getTranscript);
 router.post('/transcript', getTranscript);
-router.post("/generateClips", generateClips);
+router.post('/url/transcript', getTranscript); // Handle URL-based transcript requests
+router.post("/generateClips", protect, checkClipLimits, generateClips);
 router.post("/details/:videoId", getDetailsByVideoID);
 router.get("/download", processClip);
 router.post("/addFinalVideo", addFinalVideo);

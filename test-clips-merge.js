@@ -46,7 +46,7 @@ const ensureDirs = () => {
 // Check AWS config
 const checkAwsConfig = () => {
   console.log('Checking AWS configuration...');
-  const requiredVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_BUCKET'];
+  const requiredVars = ['AWS_ACCESS_KEY_ID_B', 'AWS_SECRET_ACCESS_KEY_B', 'AWS_S3_BUCKET_B'];
   const missingVars = requiredVars.filter(varName => !process.env[varName]);
   
   if (missingVars.length > 0) {

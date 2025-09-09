@@ -11,10 +11,38 @@ const mongoose = require('mongoose');
 const router = express.Router();
 
 // Configure upload directory
-const uploadDir = process.env.UPLOADS_DIR || '/app/backend/uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-  console.log(`Created upload directory: ${uploadDir}`);
+let uploadDir = process.env.UPLOADS_DIR || '/app/backend/uploads';
+console.log('Configuring upload directory:', uploadDir);
+console.log('Current working directory:', process.cwd());
+
+// Safety check - ensure we're not trying to create at root level
+if (uploadDir === '/uploads' || uploadDir === '/var/uploads') {
+  console.warn('WARNING: uploadDir would be at root level, using fallback');
+  uploadDir = '/app/backend/uploads';
+}
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+    console.log(`Created upload directory: ${uploadDir}`);
+  }
+} catch (error) {
+  console.error('Failed to create upload directory:', error);
+  
+  // Try fallback to current working directory
+  try {
+    console.log('Attempting fallback upload directory creation...');
+    const fallbackUploadDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(fallbackUploadDir)) {
+      fs.mkdirSync(fallbackUploadDir, { recursive: true });
+      console.log(`Created fallback upload directory: ${fallbackUploadDir}`);
+    }
+    // Update the uploadDir variable to use fallback
+    uploadDir = fallbackUploadDir;
+  } catch (fallbackError) {
+    console.error('Fallback upload directory creation also failed:', fallbackError);
+    throw new Error(`Failed to create upload directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+  }
 }
 
 const storage = multer.diskStorage({

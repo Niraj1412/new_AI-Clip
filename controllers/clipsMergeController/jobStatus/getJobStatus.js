@@ -77,7 +77,7 @@ exports.getJobStatus = (req, res) => {
   
   if (outputPath) {
     // Guess the S3 URL based on file name
-    const s3Url = `https://${process.env.AWS_S3_BUCKET || 'clipsmart'}.s3.amazonaws.com/merged-clips/${outputFileName}`;
+    const s3Url = `https://${process.env.AWS_S3_BUCKET_B || 'clipsmart'}.s3.amazonaws.com/merged-clips/${outputFileName}`;
     console.log(`Output file exists, using S3 URL: ${s3Url}`);
     
     // Job completed but not in memory tracker

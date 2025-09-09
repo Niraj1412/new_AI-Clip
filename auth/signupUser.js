@@ -3,6 +3,7 @@ const { OAuth2Client } = require("google-auth-library");
 const { axiosWithProxy } = require("../utils/axiosWithProxy");
 const User = require("../model/usersSchema");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 dotenv.config();
 
@@ -39,8 +40,16 @@ const signupUser = async (req, res) => {
             });
         }
 
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                status: false,
+                message: "Database connection unavailable. Please try again later.",
+            });
+        }
+
         // Check if user already exists
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne({ email }).maxTimeMS(10000);
         if (existingUser) {
             return res.status(400).json({
                 status: false,
@@ -61,7 +70,7 @@ const signupUser = async (req, res) => {
         });
 
         // Save user
-        await user.save();
+        await user.save({ maxTimeMS: 30000 });
 
         // Generate JWT token
         const token = jwt.sign(
@@ -113,8 +122,16 @@ const signupUserWithGoogle = async (req, res) => {
 
         const { email, name, picture, sub } = ticket.getPayload();
 
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                status: false,
+                message: "Database connection unavailable. Please try again later.",
+            });
+        }
+
         // Check if user already exists
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne({ email }).maxTimeMS(10000);
         if (existingUser) {
             return res.status(400).json({
                 status: false,
@@ -133,7 +150,7 @@ const signupUserWithGoogle = async (req, res) => {
         });
 
         // Save user
-        await user.save();
+        await user.save({ maxTimeMS: 30000 });
 
         // Generate JWT token
         const jwtToken = jwt.sign(

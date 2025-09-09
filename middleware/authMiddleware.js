@@ -7,7 +7,7 @@ const User = require('../model/usersSchema');
  */
 const protect = async (req, res, next) => {
   let token;
-  console.log('Auth middleware called for:', req.originalUrl);
+  console.log('🛡️ Auth middleware called for:', req.originalUrl, req.method);
 
   // For testing/development: Allow bypass of auth middleware using an env var
   if (process.env.BYPASS_AUTH === 'true') {
@@ -137,4 +137,73 @@ const admin = (req, res, next) => {
   }
 };
 
-module.exports = { protect, admin }; 
+/**
+ * Middleware to check user limits for clip generation
+ * Should be used after the protect middleware
+ */
+const checkClipLimits = async (req, res, next) => {
+  try {
+    const user = req.user;
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    // Check if user can generate clips
+    const limitCheck = user.canGenerateClip();
+
+    if (!limitCheck.allowed) {
+      return res.status(429).json({
+        success: false,
+        message: 'Monthly clip limit exceeded',
+        details: {
+          limitReached: true,
+          remainingClips: limitCheck.remainingClips,
+          planType: user.planType,
+          limits: limitCheck.limits,
+          resetDate: new Date(user.usageTracking.lastUsageReset.getTime() + (30 * 24 * 60 * 60 * 1000)).toISOString()
+        }
+      });
+    }
+
+    // Check video duration limit for free users
+    if (user.planType === 'free') {
+      const { transcripts } = req.body;
+      if (transcripts && transcripts[0]) {
+        const videoDuration = transcripts[0].duration ||
+          (transcripts[0].segments && transcripts[0].segments.length > 0
+            ? transcripts[0].segments[transcripts[0].segments.length - 1].endTime || 300
+            : 300);
+
+        if (videoDuration > 300) { // 5 minutes = 300 seconds
+          return res.status(400).json({
+            success: false,
+            message: 'Video duration exceeds free plan limit',
+            details: {
+              maxDuration: 300,
+              currentDuration: videoDuration,
+              planType: user.planType,
+              upgradeRequired: true
+            }
+          });
+        }
+      }
+    }
+
+    // Add limit info to request for later use
+    req.limitInfo = limitCheck;
+
+    next();
+  } catch (error) {
+    console.error('Error in clip limits middleware:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while checking limits'
+    });
+  }
+};
+
+module.exports = { protect, admin, checkClipLimits }; 

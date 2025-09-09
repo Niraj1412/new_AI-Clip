@@ -33,9 +33,31 @@ const downloadClip = async (req, res) => {
         }
 
         // Create a temp directory if it doesn't exist
-        const tempDir = path.join(__dirname, '../../temp');
-        if (!fs.existsSync(tempDir)) {
+        let tempDir = path.join(__dirname, '../../temp');
+        console.log(`Creating temp directory: ${tempDir}`);
+        
+        try {
+          if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir, { recursive: true });
+            console.log('Temp directory created successfully');
+          }
+        } catch (error) {
+          console.error('Failed to create temp directory:', error);
+          
+          // Try fallback to current working directory
+          try {
+            console.log('Attempting fallback temp directory creation...');
+            const fallbackTempDir = path.join(process.cwd(), 'temp');
+            if (!fs.existsSync(fallbackTempDir)) {
+              fs.mkdirSync(fallbackTempDir, { recursive: true });
+              console.log(`Created fallback temp directory: ${fallbackTempDir}`);
+            }
+            // Update the tempDir variable to use fallback
+            tempDir = fallbackTempDir;
+          } catch (fallbackError) {
+            console.error('Fallback temp directory creation also failed:', fallbackError);
+            throw new Error(`Failed to create temp directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+          }
         }
 
         // Generate a unique file name

@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const Video = require('../../model/uploadVideosSchema');
 const FinalVideo = require('../../model/finalVideosSchema');
 const { uploadToS3 } = require('../../utils/s3');
+const { getSafeOutputDir, getSafeTempDir, ensureDirectoryExists, isPathSafe } = require('../../utils/pathUtils');
 
 // Configure FFmpeg path
 
@@ -62,23 +63,68 @@ const configureFfmpeg = () => {
 // Call configuration function
 configureFfmpeg();
 
+// Note: Path safety is now handled by the pathUtils module
+
 const resolveVideoPath = (filePath) => {
   console.log(`[Path Resolution] Attempting to resolve: ${filePath}`);
 
-  const uploadsBase = process.env.UPLOADS_DIR || '/app/backend/uploads';
+  // Get the filename only - this is the key fix
   const filename = path.basename(filePath);
   const normalizedFilePath = filePath.replace(/\\/g, '/');
 
-  const possiblePaths = [
-    normalizedFilePath, // Direct path (if absolute)
-    path.join(uploadsBase, filename), // Base path + filename
-    path.join(uploadsBase, normalizedFilePath.startsWith('uploads/') ? normalizedFilePath.slice(8) : filename),
-    path.join(uploadsBase, normalizedFilePath.startsWith('backend/uploads/') ? normalizedFilePath.slice(16) : filename),
-  ];
+  // Define multiple possible upload directories based on environment
+  const envUploadsDir = process.env.UPLOADS_DIR;
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  const possibleUploadBases = [
+    envUploadsDir,                                       // Environment variable if set
+    isProduction ? '/app/backend/uploads' : './backend/uploads',  // Primary production vs dev path
+    '/app/uploads',                                      // Alternative production path
+    '/app/backend/uploads',                              // Explicit production path
+    path.join(process.cwd(), 'backend/uploads'),        // Current directory relative
+    path.join(process.cwd(), 'uploads'),                // Alternative current directory
+    path.join(__dirname, '../../../backend/uploads'),   // Relative from this file
+    path.join(__dirname, '../../../uploads'),           // Alternative relative
+    path.join(__dirname, '../../uploads'),              // Another relative option
+  ].filter(Boolean); // Remove any undefined values
 
-  console.log('[Path Resolution] Checking paths:', possiblePaths);
+  const possiblePaths = [];
+  
+  // Add direct path if it's absolute
+  if (path.isAbsolute(normalizedFilePath)) {
+    possiblePaths.push(normalizedFilePath);
+  }
+  
+  // Special case: if the filePath looks like a relative path but might be stored as such in DB
+  // Try to construct absolute paths directly
+  if (normalizedFilePath.startsWith('backend/uploads/') || normalizedFilePath.startsWith('uploads/')) {
+    possiblePaths.push(path.join(isProduction ? '/app' : process.cwd(), normalizedFilePath));
+  }
+  
+  // Add all combinations of base paths with filename
+  for (const base of possibleUploadBases) {
+    possiblePaths.push(path.join(base, filename));
+    
+    // Also try with subdirectories if the original path had them
+    if (normalizedFilePath.includes('/')) {
+      const pathParts = normalizedFilePath.split('/');
+      if (pathParts.length > 1) {
+        // Try with the last part of the directory structure
+        possiblePaths.push(path.join(base, pathParts[pathParts.length - 1]));
+      }
+    }
+  }
 
-  for (const p of possiblePaths) {
+  // Remove duplicates
+  const uniquePaths = [...new Set(possiblePaths)];
+  
+  console.log(`[Path Resolution] Environment: ${process.env.NODE_ENV}`);
+  console.log(`[Path Resolution] UPLOADS_DIR env var: ${process.env.UPLOADS_DIR || 'undefined'}`);
+  console.log(`[Path Resolution] Current working directory: ${process.cwd()}`);
+  console.log(`[Path Resolution] Filename extracted: ${filename}`);
+  console.log(`[Path Resolution] Checking ${uniquePaths.length} possible paths:`, uniquePaths);
+
+  for (const p of uniquePaths) {
     const normalizedPath = path.normalize(p);
     if (fs.existsSync(normalizedPath)) {
       console.log(`[Path Resolution] Found at: ${normalizedPath}`);
@@ -86,23 +132,39 @@ const resolveVideoPath = (filePath) => {
     }
   }
 
+  // Enhanced debugging
   const debugInfo = {
     cwd: process.cwd(),
     environment: process.env.NODE_ENV,
-    uploadsBase,
+    uploadsDir: process.env.UPLOADS_DIR || 'undefined',
     originalPath: filePath,
-    checkedPaths: possiblePaths,
+    filename: filename,
+    possibleUploadBases: possibleUploadBases,
+    checkedPaths: uniquePaths,
   };
   console.error('[Path Resolution] Debug info:', debugInfo);
 
-  try {
-    const uploadsContent = fs.readdirSync(uploadsBase);
-    console.log(`[Path Resolution] Contents of ${uploadsBase}:`, uploadsContent);
-  } catch (err) {
-    console.error(`[Path Resolution] Could not read ${uploadsBase}:`, err);
+  // Try to list contents of all possible base directories
+  for (const base of possibleUploadBases) {
+    try {
+      if (fs.existsSync(base)) {
+        const contents = fs.readdirSync(base);
+        console.log(`[Path Resolution] Contents of ${base}:`, contents);
+        // Check if our file is in there with a different name pattern
+        const matchingFiles = contents.filter(file => 
+          file.includes(filename.replace('.mp4', '')) || 
+          filename.includes(file.replace('.mp4', ''))
+        );
+        if (matchingFiles.length > 0) {
+          console.log(`[Path Resolution] Potential matches in ${base}:`, matchingFiles);
+        }
+      }
+    } catch (err) {
+      console.error(`[Path Resolution] Could not read ${base}:`, err.message);
+    }
   }
 
-  throw new Error(`Could not resolve path for: ${filePath}\nTried paths:\n${possiblePaths.join('\n')}`);
+  throw new Error(`Could not resolve path for: ${filePath}\nFilename: ${filename}\nTried ${uniquePaths.length} paths:\n${uniquePaths.join('\n')}`);
 };
 
 
@@ -128,11 +190,117 @@ const videoMergeClips = async (clips, user, videoInfo = {}) => {
   try {
     if (!clips?.length) throw new Error('No clips provided');
 
-    // Setup directories
-    const tempDir = path.join(process.env.TEMP_DIR || path.join(__dirname, '../../../tmp'), jobId);
-    const outputDir = process.env.OUTPUT_DIR || path.join(__dirname, '../../../output');
-    fs.mkdirSync(tempDir, { recursive: true });
-    fs.mkdirSync(outputDir, { recursive: true });
+    // Setup directories using safe path utilities
+    const tempDir = getSafeTempDir(process.env.TEMP_DIR, jobId);
+    const outputDir = getSafeOutputDir(process.env.OUTPUT_DIR);
+    
+    // Log the final resolved paths after all safety checks
+    console.log(`[${jobId}] Final resolved paths after safety checks:`);
+    console.log(`[${jobId}]   tempDir: ${tempDir}`);
+    console.log(`[${jobId}]   outputDir: ${outputDir}`);
+    
+    // One more safety check - ensure paths are not at root level
+    if (tempDir.startsWith('/') && !tempDir.startsWith('/app')) {
+      console.error(`[${jobId}] CRITICAL: tempDir still at root level: ${tempDir}`);
+      tempDir = path.join(process.cwd(), 'tmp', jobId);
+    }
+    
+    if (outputDir.startsWith('/') && !outputDir.startsWith('/app')) {
+      console.error(`[${jobId}] CRITICAL: outputDir still at root level: ${outputDir}`);
+      outputDir = path.join(process.cwd(), 'output');
+    }
+    
+    // Final verification - log the paths one more time
+    console.log(`[${jobId}] Final verification - paths to be used:`);
+    console.log(`[${jobId}]   tempDir: ${tempDir}`);
+    console.log(`[${jobId}]   outputDir: ${outputDir}`);
+    
+    // Ensure we're working within the expected directory structure
+    if (process.env.NODE_ENV === 'production' && !process.cwd().startsWith('/app')) {
+      console.warn(`[${jobId}] WARNING: Working directory is not /app as expected: ${process.cwd()}`);
+    }
+    
+    // If working directory is at root level, force it to /app
+    if (process.cwd() === '/') {
+      console.warn(`[${jobId}] WARNING: Working directory is at root level, this may cause permission issues`);
+      console.warn(`[${jobId}] Attempting to change to /app directory`);
+      try {
+        process.chdir('/app');
+        console.log(`[${jobId}] Successfully changed working directory to: ${process.cwd()}`);
+      } catch (err) {
+        console.warn(`[${jobId}] Could not change working directory: ${err.message}`);
+      }
+    }
+    
+    // Log user and group information for debugging permission issues
+    try {
+      const uid = process.getuid ? process.getuid() : 'N/A';
+      const gid = process.getgid ? process.getgid() : 'N/A';
+      console.log(`[${jobId}] Process user info - UID: ${uid}, GID: ${gid}`);
+    } catch (err) {
+      console.log(`[${jobId}] Could not get user info: ${err.message}`);
+    }
+    
+    // Check for Docker-specific environment variables that might affect paths
+    const dockerEnvVars = ['DOCKER_CONTAINER', 'KUBERNETES_SERVICE_HOST', 'HOSTNAME'];
+    dockerEnvVars.forEach(envVar => {
+      if (process.env[envVar]) {
+        console.log(`[${jobId}] Docker env var ${envVar}: ${process.env[envVar]}`);
+      }
+    });
+    
+    // Check all environment variables for any that might contain problematic paths
+    const problematicPaths = ['/output', '/tmp', '/var/tmp'];
+    Object.keys(process.env).forEach(envVar => {
+      const envValue = process.env[envVar];
+      if (envValue && typeof envValue === 'string') {
+        problematicPaths.forEach(path => {
+          if (envValue.includes(path)) {
+            console.warn(`[${jobId}] WARNING: Environment variable ${envVar} contains problematic path: ${envValue}`);
+          }
+        });
+      }
+    });
+    
+    // Log the resolved paths for debugging
+    console.log(`[${jobId}] Resolved paths:`);
+    console.log(`[${jobId}]   __dirname: ${__dirname}`);
+    console.log(`[${jobId}]   process.cwd(): ${process.cwd()}`);
+    console.log(`[${jobId}]   tempDir: ${tempDir}`);
+    console.log(`[${jobId}]   outputDir: ${outputDir}`);
+    console.log(`[${jobId}]   process.env.TEMP_DIR: ${process.env.TEMP_DIR}`);
+    console.log(`[${jobId}]   process.env.OUTPUT_DIR: ${process.env.OUTPUT_DIR}`);
+    console.log(`[${jobId}]   NODE_ENV: ${process.env.NODE_ENV}`);
+    
+    // Check for problematic environment variable values
+    if (process.env.OUTPUT_DIR === '/output' || process.env.TEMP_DIR === '/tmp') {
+      console.warn(`[${jobId}] WARNING: Environment variables set to root paths that may cause permission issues!`);
+      console.warn(`[${jobId}] OUTPUT_DIR: ${process.env.OUTPUT_DIR}`);
+      console.warn(`[${jobId}] TEMP_DIR: ${process.env.TEMP_DIR}`);
+    }
+    
+    // Test if we can write to the current directory
+    try {
+      const testFile = path.join(process.cwd(), 'test_write_permission.tmp');
+      fs.writeFileSync(testFile, 'test');
+      fs.unlinkSync(testFile);
+      console.log(`[${jobId}] Write permission test passed for current directory`);
+    } catch (err) {
+      console.warn(`[${jobId}] Write permission test failed for current directory: ${err.message}`);
+    }
+    
+    // Create directories using safe utilities
+    const tempDirCreated = await ensureDirectoryExists(tempDir, 'temp');
+    const outputDirCreated = await ensureDirectoryExists(outputDir, 'output');
+    
+    if (!tempDirCreated || !outputDirCreated) {
+      throw new Error('Failed to create required directories');
+    }
+    
+    // Final verification that directories were created successfully
+    console.log(`[${jobId}] Directory creation completed successfully:`);
+    console.log(`[${jobId}]   tempDir: ${tempDir} (exists: ${fs.existsSync(tempDir)})`);
+    console.log(`[${jobId}]   outputDir: ${outputDir} (exists: ${fs.existsSync(outputDir)})`);
 
     // Process clips
     let totalDuration = 0;

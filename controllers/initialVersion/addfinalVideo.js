@@ -24,10 +24,21 @@ const addFinalVideo = async (req, res) => {
     const thumbnailVideoId = clipsInfo.length > 0 ? clipsInfo[0].videoId : null;
     const thumbnailUrl = thumbnailVideoId ? `https://img.youtube.com/vi/${thumbnailVideoId}/maxresdefault.jpg` : null;
     
-    // Generate title based on video content
-    const defaultTitle = clipsInfo.length > 0 
-      ? `Compilation of ${clipsInfo.length} clips` 
-      : "Video Compilation";
+    // Generate title based on video content - try to use original video title
+    let defaultTitle = "Video Compilation";
+    
+    if (clipsInfo.length > 0) {
+      // Try to get original video title from first clip
+      const firstClip = clipsInfo[0];
+      if (firstClip.originalVideoTitle) {
+        defaultTitle = firstClip.originalVideoTitle;
+      } else if (firstClip.transcriptText && firstClip.transcriptText.length > 10) {
+        // Use first part of transcript as title if original title not available
+        defaultTitle = firstClip.transcriptText.substring(0, 50).trim() + (firstClip.transcriptText.length > 50 ? '...' : '');
+      } else {
+        defaultTitle = `Compilation of ${clipsInfo.length} clips`;
+      }
+    }
     
     // Get job ID from filename if available
     const jobId = fileNames3.split('_')[1] || null;

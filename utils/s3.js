@@ -1,19 +1,22 @@
 const fs = require('fs');
-const AWS = require('aws-sdk');
 const path = require('path');
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 require('dotenv').config();
 
-// Configure AWS SDK with credentials from .env file
-const s3 = new AWS.S3({
-  region: process.env.AWS_REGION,
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  // Add S3 configuration to never use ACLs
-  s3DisableBodySigning: true
+// Create S3 client with AWS SDK v3
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION_B || process.env.AWS_REGION || 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID_B || process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY_B || process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
 
-// Default bucket name from .env
-const defaultBucket = process.env.AWS_S3_BUCKET;
+// Default bucket name from .env with fallbacks (prioritize _B variables)
+const defaultBucket = process.env.AWS_S3_BUCKET_B || 
+                      process.env.AWS_S3_BUCKET || 
+                      's3-clipsmartai-input-output-videos';
 
 /**
  * Upload a file to AWS S3
@@ -32,29 +35,25 @@ const uploadToS3 = async (filePath, s3Key) => {
     
     const fileContent = fs.readFileSync(filePath);
     
-    // Create upload parameters WITHOUT ACL settings
-    const params = {
+    // Create upload command with AWS SDK v3
+    const command = new PutObjectCommand({
       Bucket: defaultBucket,
       Key: s3Key,
       Body: fileContent,
-      ContentType: getContentType(filePath)
-    };
+      ContentType: getContentType(filePath),
+    });
     
-    // Upload to S3 - explicitly passing options to disable ACL
-    const uploadOptions = {
-      // Ensure no ACL is included in the request
-      useAccelerateEndpoint: false
-    };
+    const uploadResult = await s3Client.send(command);
+    const region = process.env.AWS_REGION_B || process.env.AWS_REGION || 'us-east-1';
+    const fileUrl = `https://${defaultBucket}.s3.${region}.amazonaws.com/${s3Key}`;
+    console.log(`File uploaded successfully to ${fileUrl}`);
     
-    const uploadResult = await s3.upload(params, uploadOptions).promise();
-    console.log(`File uploaded successfully to ${uploadResult.Location}`);
-    
-    return uploadResult.Location;
+    return fileUrl;
   } catch (error) {
     console.error('Error uploading file to S3:', error);
     
     // Log additional information for better debugging
-    if (error.code === 'AccessControlListNotSupported') {
+    if (error.name === 'AccessControlListNotSupported') {
       console.log('This S3 bucket has Object Ownership set to "Bucket owner enforced" which does not allow ACLs.');
       console.log('Please ensure you have correctly configured your S3 client and bucket settings.');
     }
@@ -104,13 +103,12 @@ const getContentType = (filePath) => {
  */
 const getSignedDownloadUrl = async (s3Key, bucket = defaultBucket, expiresInSeconds = 3600) => {
   try {
-    const params = {
+    const command = new GetObjectCommand({
       Bucket: bucket,
       Key: s3Key,
-      Expires: expiresInSeconds
-    };
+    });
 
-    const url = await s3.getSignedUrlPromise('getObject', params);
+    const url = await getSignedUrl(s3Client, command, { expiresIn: expiresInSeconds });
     return url;
   } catch (error) {
     console.error('Error generating signed URL:', error);
@@ -128,15 +126,13 @@ const getSignedDownloadUrl = async (s3Key, bucket = defaultBucket, expiresInSeco
  */
 const getSignedUploadUrl = async (s3Key, contentType, bucket = defaultBucket, expiresInSeconds = 3600) => {
   try {
-    const params = {
+    const command = new PutObjectCommand({
       Bucket: bucket,
       Key: s3Key,
-      Expires: expiresInSeconds,
-      ContentType: contentType
-      // Removed ACL: 'public-read' as it may not be supported with bucket settings
-    };
+      ContentType: contentType,
+    });
 
-    const url = await s3.getSignedUrlPromise('putObject', params);
+    const url = await getSignedUrl(s3Client, command, { expiresIn: expiresInSeconds });
     return url;
   } catch (error) {
     console.error('Error generating signed upload URL:', error);
@@ -152,15 +148,15 @@ const getSignedUploadUrl = async (s3Key, contentType, bucket = defaultBucket, ex
  */
 const checkObjectExists = async (s3Key, bucket = defaultBucket) => {
   try {
-    const params = {
+    const command = new HeadObjectCommand({
       Bucket: bucket,
-      Key: s3Key
-    };
+      Key: s3Key,
+    });
 
-    await s3.headObject(params).promise();
+    await s3Client.send(command);
     return true;
   } catch (error) {
-    if (error.code === 'NotFound') {
+    if (error.name === 'NotFound') {
       return false;
     }
     throw error;
@@ -175,12 +171,12 @@ const checkObjectExists = async (s3Key, bucket = defaultBucket) => {
  */
 const deleteObject = async (s3Key, bucket = defaultBucket) => {
   try {
-    const params = {
+    const command = new DeleteObjectCommand({
       Bucket: bucket,
-      Key: s3Key
-    };
+      Key: s3Key,
+    });
 
-    await s3.deleteObject(params).promise();
+    await s3Client.send(command);
     console.log(`Object deleted successfully: s3://${bucket}/${s3Key}`);
     return true;
   } catch (error) {

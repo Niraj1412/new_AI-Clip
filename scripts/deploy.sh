@@ -57,5 +57,5 @@ pm2 save
 sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME
 
 echo "Deployment completed successfully!"
-echo "Your application should be running at http://localhost:4001"
+echo "Your application should be running at https://clipsmartai.com/api-node"
 echo "Make sure to set up Nginx or another reverse proxy for production use." 

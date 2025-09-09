@@ -4,9 +4,10 @@ const getClipsByVideoID = require("../controllers/clipsController/getClipsByVide
 const updateClip = require("../controllers/clipsController/updateClip");
 const mergeClips = require("../controllers/clipsMergeController/mergeClips");
 const { mergingClips } = require("../controllers/clipsMergeController/mergingClips");
+const { protect, checkClipLimits } = require("../middleware/authMiddleware");
 const router = require("express").Router();
 
-router.post("/generateClip", generateClips);
+router.post("/generateClip", protect, checkClipLimits, generateClips);
 router.delete("/deleteClip/:id", deleteClip);
 router.get("/getClipsByVideoID/:videoID", getClipsByVideoID);
 router.put("/updateClip/:id", updateClip);

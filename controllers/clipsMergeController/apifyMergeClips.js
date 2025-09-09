@@ -16,10 +16,33 @@ const videoCache = {
   // Cache directory path
   cacheDir: path.join(__dirname, '../../cache'),
   init() {
-    if (!fs.existsSync(this.cacheDir)) {
-      fs.mkdirSync(this.cacheDir, { recursive: true });
-      console.log(`Created video cache directory at ${this.cacheDir}`);
+    console.log(`Creating video cache directory: ${this.cacheDir}`);
+    
+    try {
+      if (!fs.existsSync(this.cacheDir)) {
+        fs.mkdirSync(this.cacheDir, { recursive: true });
+        console.log(`Created video cache directory at ${this.cacheDir}`);
+      }
+    } catch (error) {
+      console.error('Failed to create video cache directory:', error);
+      
+      // Try fallback to current working directory
+      try {
+        console.log('Attempting fallback video cache directory creation...');
+        const fallbackCacheDir = path.join(process.cwd(), 'cache');
+        if (!fs.existsSync(fallbackCacheDir)) {
+          fs.mkdirSync(fallbackCacheDir, { recursive: true });
+          console.log(`Created fallback video cache directory: ${fallbackCacheDir}`);
+        }
+        // Update the cacheDir to use fallback
+        this.cacheDir = fallbackCacheDir;
+        console.log(`Using fallback video cache directory: ${this.cacheDir}`);
+      } catch (fallbackError) {
+        console.error('Fallback video cache directory creation also failed:', fallbackError);
+        throw new Error(`Failed to create video cache directory: ${error.message}. Fallback also failed: ${fallbackError.message}`);
+      }
     }
+    
     setInterval(() => this.cleanupCache(), 24 * 60 * 60 * 1000);
     
     return this;

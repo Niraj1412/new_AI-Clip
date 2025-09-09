@@ -12,17 +12,24 @@ const path = require('path');
 
 dotenv.config();
 
-const PYTHON_API = process.env.PYTHON_API || 'https://ai-py-backend.onrender.com';
-const APPLICATION_URL = process.env.APPLICATION_URL || 'https://new-ai-clip-1.onrender.com';
+const PYTHON_API = process.env.PYTHON_API || 'https://clipsmartai.com/api-py';
+const APPLICATION_URL = process.env.APPLICATION_URL || 'https://clipsmartai.com/api-node';
 
 google.options({ http2: true, headers: { 'Referer': APPLICATION_URL, 'Origin': APPLICATION_URL } });
-const youtube = google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY });
+const youtube = google.youtube({ version: 'v3', auth: process.env.YOUTUBE_API_KEY_B });
 
 axios.defaults.headers.common['Referer'] = APPLICATION_URL;
 axios.defaults.headers.common['Origin'] = APPLICATION_URL;
+axios.defaults.timeout = 30000; // 30 second timeout for all axios requests
 
 // **Utility Functions**
 const detectPlatformFromUrl = (url) => {
+  // Handle null, undefined, or non-string URLs
+  if (!url || typeof url !== 'string') {
+    console.warn('detectPlatformFromUrl called with invalid URL:', url);
+    return null;
+  }
+
   if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
   if (url.includes('vimeo.com')) return 'vimeo';
   if (url.includes('dailymotion.com')) return 'dailymotion';
@@ -33,6 +40,12 @@ const detectPlatformFromUrl = (url) => {
 };
 
 const extractVideoId = (url, platform) => {
+  // Handle null, undefined, or non-string URLs
+  if (!url || typeof url !== 'string') {
+    console.warn('extractVideoId called with invalid URL:', url);
+    return null;
+  }
+
   if (platform === 'youtube') {
     if (/^[a-zA-Z0-9_-]{11}$/.test(url)) return url;
     if (url.includes('v=')) return url.split('v=')[1].split('&')[0];
@@ -181,38 +194,88 @@ async function getTranscriptWithYtDlp(url) {
   }
 }
 
-// **YouTube Transcript Fetching (Unchanged)**
+// **YouTube Transcript Fetching with Enhanced Error Handling**
 async function getYoutubeTranscript(url) {
   const videoId = extractVideoId(url, 'youtube');
+
+  if (!videoId) {
+    throw new Error('Could not extract YouTube video ID from URL');
+  }
+
   const methods = [
-    () => fetchYoutubeTranscriptDirectly(videoId),
-    () => fetchYoutubeCaptionsScraper(videoId),
-    () => fetchFromPythonAPI(videoId),
-    () => getTranscriptWithYtDlp(url),
+    { name: 'Direct YouTube Transcript', func: () => fetchYoutubeTranscriptDirectly(videoId) },
+    { name: 'YouTube Captions Scraper', func: () => fetchYoutubeCaptionsScraper(videoId) },
+    { name: 'Python API', func: () => fetchFromPythonAPI(videoId) },
+    { name: 'yt-dlp Fallback', func: () => getTranscriptWithYtDlp(url) },
   ];
+
+  const errors = [];
   for (const method of methods) {
     try {
-      const transcript = await method();
-      if (transcript && transcript.length > 0) return transcript;
+      console.log(`Trying YouTube method: ${method.name}`);
+      const transcript = await method.func();
+      if (transcript && transcript.length > 0) {
+        console.log(`✅ Success with ${method.name}: ${transcript.length} segments`);
+        return transcript;
+      } else {
+        console.warn(`⚠️ ${method.name} returned empty transcript`);
+        errors.push(`${method.name}: Empty transcript`);
+      }
     } catch (error) {
-      console.error(`YouTube method failed: ${error.message}`);
+      console.error(`❌ ${method.name} failed: ${error.message}`);
+      errors.push(`${method.name}: ${error.message}`);
     }
   }
-  throw new Error('No transcript available for this YouTube video');
+
+  console.error('All YouTube transcript methods failed:', errors);
+  throw new Error(`No transcript available for this YouTube video. Tried: ${methods.map(m => m.name).join(', ')}. Errors: ${errors.join('; ')}`);
 }
 
-// Placeholder YouTube helper functions (assumed to exist)
+// YouTube helper functions with error handling and timeouts
 async function fetchYoutubeTranscriptDirectly(videoId) {
-  return await YoutubeTranscript.fetchTranscript(videoId);
+  try {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('YouTube transcript fetch timeout')), 15000)
+    );
+
+    const fetchPromise = YoutubeTranscript.fetchTranscript(videoId);
+    return await Promise.race([fetchPromise, timeoutPromise]);
+  } catch (error) {
+    console.warn('Direct YouTube transcript fetch failed:', error.message);
+    throw error;
+  }
 }
 
 async function fetchYoutubeCaptionsScraper(videoId) {
-  return await getSubtitles({ videoID: videoId });
+  try {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('YouTube captions scraper timeout')), 15000)
+    );
+
+    const fetchPromise = getSubtitles({ videoID: videoId });
+    return await Promise.race([fetchPromise, timeoutPromise]);
+  } catch (error) {
+    console.warn('YouTube captions scraper failed:', error.message);
+    throw error;
+  }
 }
 
 async function fetchFromPythonAPI(videoId) {
-  const response = await axios.get(`${PYTHON_API}/youtube-transcript/${videoId}`);
-  return response.data;
+  try {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Python API timeout')), 20000)
+    );
+
+    const fetchPromise = axios.get(`${PYTHON_API}/youtube-transcript/${videoId}`);
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
+    return response.data;
+  } catch (error) {
+    console.warn('Python API fetch failed:', error.message);
+    throw error;
+  }
 }
 
 // **Dailymotion Transcript Fetching**
@@ -299,17 +362,23 @@ async function getDropboxTranscript(url) {
 
 // **Main Transcript Endpoint**
 const getTranscript = async (req, res) => {
-  const { url, platform: providedPlatform } = req.body;
-  console.log('URL:', url, 'Provided platform:', providedPlatform);
+  // Handle both 'url' and 'video_url' parameter names for compatibility
+  const url = req.body.url || req.body.video_url;
+  const providedPlatform = req.body.platform;
+
+  if (!url) {
+    return res.status(400).json({
+      message: 'Video URL is required',
+      status: false,
+      error: 'MISSING_URL',
+      details: 'Please provide a valid video URL in the request body as "url" or "video_url"'
+    });
+  }
 
   const detectedPlatform = providedPlatform === 'auto' || !providedPlatform
     ? detectPlatformFromUrl(url)
     : providedPlatform;
   console.log('Detected platform:', detectedPlatform);
-
-  if (!url) {
-    return res.status(400).json({ message: 'Video URL is required', status: false });
-  }
   if (!detectedPlatform) {
     return res.status(400).json({ message: 'Unsupported platform or invalid URL', status: false });
   }

@@ -6,10 +6,11 @@ const { v4: uuidv4 } = require('uuid');
 const AWS = require('aws-sdk');
 const { rimraf } = require('rimraf');
 const youtubeDl = require('youtube-dl-exec');
+const { getSafeOutputDir, getSafeTempDir, ensureDirectoryExists } = require('../../utils/pathUtils');
 
 // Configure AWS SDK
 const configureAWS = () => {
-  const requiredEnvVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_BUCKET'];
+  const requiredEnvVars = ['AWS_ACCESS_KEY_ID_B', 'AWS_SECRET_ACCESS_KEY_B', 'AWS_S3_BUCKET_B'];
   const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
   
   if (missingVars.length > 0) {
@@ -18,9 +19,9 @@ const configureAWS = () => {
   }
   
   AWS.config.update({
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    region: process.env.AWS_REGION || 'us-east-1'
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID_B,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY_B,
+    region: process.env.AWS_REGION_B || 'us-east-1'
   });
   
   return new AWS.S3();
@@ -28,9 +29,9 @@ const configureAWS = () => {
 
 const s3 = configureAWS();
 
-// Set up temp directories
-const TMP_DIR = path.join(__dirname, '../../tmp');
-const OUTPUT_DIR = path.join(__dirname, '../../output');
+// Set up temp directories using safe path utilities
+let TMP_DIR = getSafeTempDir();
+let OUTPUT_DIR = getSafeOutputDir();
 
 // Maximum allowed duration for a merged video (in seconds)
 const MAX_MERGED_DURATION = 3600; // 1 hour
@@ -71,15 +72,44 @@ class UploadError extends Error {
 // Ensure temp directories exist
 const ensureDirs = async () => {
   try {
+    // Log the paths being used
+    console.log('Creating directories with paths:');
+    console.log(`  TMP_DIR: ${TMP_DIR}`);
+    console.log(`  OUTPUT_DIR: ${OUTPUT_DIR}`);
+    console.log(`  Current working directory: ${process.cwd()}`);
+    console.log(`  __dirname: ${__dirname}`);
+    
+    // Path safety is now handled by pathUtils module
+    console.log(`Final safe paths: TMP_DIR=${TMP_DIR}, OUTPUT_DIR=${OUTPUT_DIR}`);
+    
     // Use native fs.mkdirSync with recursive option
     if (!fs.existsSync(TMP_DIR)) {
-      fs.mkdirSync(TMP_DIR, { recursive: true });
+      try {
+        fs.mkdirSync(TMP_DIR, { recursive: true });
+        console.log(`Created temp directory: ${TMP_DIR}`);
+      } catch (err) {
+        console.warn(`Failed to create temp directory at ${TMP_DIR}, trying fallback`);
+        const fallbackTempDir = path.join(process.cwd(), 'tmp');
+        fs.mkdirSync(fallbackTempDir, { recursive: true });
+        TMP_DIR = fallbackTempDir;
+        console.log(`Using fallback temp directory: ${TMP_DIR}`);
+      }
     }
     
     if (!fs.existsSync(OUTPUT_DIR)) {
-      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+      try {
+        fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+        console.log(`Created output directory: ${OUTPUT_DIR}`);
+      } catch (err) {
+        console.warn(`Failed to create output directory at ${OUTPUT_DIR}, trying fallback`);
+        const fallbackOutputDir = path.join(process.cwd(), 'output');
+        fs.mkdirSync(fallbackOutputDir, { recursive: true });
+        OUTPUT_DIR = fallbackOutputDir;
+        console.log(`Using fallback output directory: ${OUTPUT_DIR}`);
+      }
     }
   } catch (error) {
+    console.error('Failed to create directories:', error);
     throw new ProcessingError(`Failed to create temporary directories: ${error.message}`);
   }
 };
@@ -305,8 +335,8 @@ const mergeVideos = (inputFiles, outputPath) => {
 // Upload file to S3
 const uploadToS3 = async (filePath, key) => {
   // Validate S3 configuration
-  if (!process.env.AWS_S3_BUCKET) {
-    throw new UploadError('AWS_S3_BUCKET environment variable is not set');
+  if (!process.env.AWS_S3_BUCKET_B) {
+    throw new UploadError('AWS_S3_BUCKET_B environment variable is not set');
   }
   
   // Check if file exists
@@ -328,7 +358,7 @@ const uploadToS3 = async (filePath, key) => {
     const fileContent = fs.readFileSync(filePath);
     
     const params = {
-      Bucket: process.env.AWS_S3_BUCKET,
+      Bucket: process.env.AWS_S3_BUCKET_B,
       Key: key,
       Body: fileContent,
       ContentType: 'video/mp4'

@@ -44,25 +44,75 @@ const processVideo = async ({ videoId, filePath, userId, isBackgroundProcess = f
       throw new Error('File exists but is empty (0 bytes)');
     }
 
-    // Create thumbnails directory if it doesn't exist
-    const thumbnailsDir = path.join(__dirname, '../../backend/thumbnails');
-    if (!fs.existsSync(thumbnailsDir)) {
-      fs.mkdirSync(thumbnailsDir, { recursive: true });
+    // Create thumbnails directory if it doesn't exist - align with index.js setup
+    // Fix thumbnail directory path - should be one level up from controllers
+    let thumbnailsDir = path.join(__dirname, '../..', 'thumbnails');
+    console.log(`[PROCESS] Creating thumbnails directory: ${thumbnailsDir}`);
+    
+    try {
+      if (!fs.existsSync(thumbnailsDir)) {
+        fs.mkdirSync(thumbnailsDir, { recursive: true });
+        console.log('[PROCESS] Thumbnails directory created successfully');
+      }
+    } catch (error) {
+      console.error('[PROCESS] Failed to create thumbnails directory:', error);
+      
+      // Try multiple fallback locations to match index.js behavior
+      const fallbackLocations = [
+        path.join(__dirname, '../..', 'thumbnails'), // backend/thumbnails
+        path.join(process.cwd(), 'thumbnails'),
+        path.join('/app/thumbnails'),
+        path.join('/app/backend/thumbnails'),
+      ];
+      
+      let fallbackSuccess = false;
+      for (const fallbackDir of fallbackLocations) {
+        try {
+          console.log(`[PROCESS] Attempting fallback thumbnails directory: ${fallbackDir}`);
+          if (!fs.existsSync(fallbackDir)) {
+            fs.mkdirSync(fallbackDir, { recursive: true });
+            console.log(`[PROCESS] Created fallback thumbnails directory: ${fallbackDir}`);
+          }
+          // Update the thumbnailsDir variable to use fallback
+          thumbnailsDir = fallbackDir;
+          fallbackSuccess = true;
+          break;
+        } catch (fallbackError) {
+          console.error(`[PROCESS] Fallback ${fallbackDir} also failed:`, fallbackError);
+        }
+      }
+      
+      if (!fallbackSuccess) {
+        throw new Error(`Failed to create thumbnails directory in any location`);
+      }
     }
 
     // Generate thumbnail
     const thumbnailFilename = `${videoId}.jpg`;
     const thumbnailPath = path.join(thumbnailsDir, thumbnailFilename);
+    console.log(`[PROCESS] Generating thumbnail: ${thumbnailPath}`);
+    
     await generateThumbnail(finalFilePath, thumbnailPath);
-    video.thumbnailUrl = `${process.env.API_BASE_URL || 'https://ai-clip-backend1-1.onrender.com'}/thumbnails/${thumbnailFilename}`;
+    
+    // Verify thumbnail was created
+    if (fs.existsSync(thumbnailPath)) {
+      console.log(`[PROCESS] Thumbnail created successfully: ${thumbnailPath}`);
+      const stats = fs.statSync(thumbnailPath);
+      console.log(`[PROCESS] Thumbnail size: ${stats.size} bytes`);
+    } else {
+      console.error(`[PROCESS] Thumbnail NOT created at: ${thumbnailPath}`);
+    }
+    
+    // Generate the correct thumbnail URL - use the base API URL without /api-node
+    const baseUrl = process.env.API_BASE_URL || 'https://clipsmartai.com/api-node';
+    video.thumbnailUrl = `${baseUrl}/thumbnails/${thumbnailFilename}`;
+    console.log(`[PROCESS] Setting thumbnailUrl: ${video.thumbnailUrl}`);
 
     // Generate transcript
     console.log(`Generating transcript for video: ${videoId}`);
     const transcript = await generateTranscript(finalFilePath);
 
-    // Update video status with transaction
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    // Update video status without transactions (for standalone MongoDB)
     try {
       const updatedVideo = await Video.findByIdAndUpdate(
         videoId,
@@ -74,10 +124,11 @@ const processVideo = async ({ videoId, filePath, userId, isBackgroundProcess = f
           updatedAt: new Date(),
           processingCompletedAt: new Date(),
         },
-        { new: true, session }
+        { 
+          new: true
+        }
       );
 
-      await session.commitTransaction();
       console.log(`Successfully processed video ${videoId}`);
 
       return {
@@ -88,10 +139,8 @@ const processVideo = async ({ videoId, filePath, userId, isBackgroundProcess = f
         transcriptId: transcript.id,
       };
     } catch (dbError) {
-      await session.abortTransaction();
+      console.error('Database update error:', dbError);
       throw dbError;
-    } finally {
-      session.endSession();
     }
   } catch (error) {
     console.error(`Processing failed for video ${videoId}:`, error.stack || error);

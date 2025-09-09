@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { getSignedDownloadUrl } = require('../utils/s3');
 const { protect } = require('../middleware/authMiddleware');
+const axios = require('axios');
 // Route for merging clips (using the original complex implementation)
 router.post("/clips", mergeClips);
 
@@ -135,6 +136,122 @@ router.get("/video/:jobId/:fileName", (req, res) => {
 
 // Original route for serving video files
 router.get("/video/:filePath", serveVideoFile);
+
+// Proxy route for serving S3 videos (CORS bypass using signed URLs)
+router.get('/s3-proxy/*', async (req, res) => {
+  try {
+    const s3Path = req.params[0]; // Get everything after /s3-proxy/
+    
+    console.log(`[S3 Proxy] Generating signed URL for: ${s3Path}`);
+    
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    
+    // Generate a signed URL for the S3 object
+    const signedUrl = await getSignedDownloadUrl(s3Path, undefined, 3600); // 1 hour expiry
+    console.log(`[S3 Proxy] Generated signed URL, forwarding request`);
+    
+    // Forward the request to the signed S3 URL
+    const response = await axios({
+      method: req.method,
+      url: signedUrl,
+      headers: {
+        // Forward relevant headers
+        ...(req.headers.range && { 'Range': req.headers.range }),
+      },
+      responseType: 'stream'
+    });
+    
+    // Forward response headers
+    res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');
+    res.setHeader('Content-Length', response.headers['content-length']);
+    res.setHeader('Accept-Ranges', response.headers['accept-ranges'] || 'bytes');
+    
+    if (response.headers['content-range']) {
+      res.setHeader('Content-Range', response.headers['content-range']);
+    }
+    
+    res.status(response.status);
+    
+    // Pipe the response
+    response.data.pipe(res);
+    
+  } catch (error) {
+    console.error('[S3 Proxy] Error:', error.message);
+    
+    // More specific error handling
+    if (error.code === 'NoSuchKey') {
+      return res.status(404).json({
+        error: 'Video not found',
+        message: 'The requested video file does not exist'
+      });
+    }
+    
+    if (error.code === 'AccessDenied') {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'Unable to access the video file due to permissions'
+      });
+    }
+    
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to proxy S3 request',
+      message: error.message
+    });
+  }
+});
+
+// Generate signed URL for S3 video access
+router.get('/s3-signed-url/*', async (req, res) => {
+  try {
+    const s3Path = req.params[0]; // Get everything after /s3-signed-url/
+    
+    console.log(`[S3 Signed URL] Generating signed URL for: ${s3Path}`);
+    
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    
+    // Generate a signed URL for the S3 object (24 hour expiry for video access)
+    const signedUrl = await getSignedDownloadUrl(s3Path, undefined, 86400); // 24 hours
+    
+    res.status(200).json({
+      success: true,
+      signedUrl: signedUrl,
+      expiresIn: 86400
+    });
+    
+  } catch (error) {
+    console.error('[S3 Signed URL] Error:', error.message);
+    
+    if (error.code === 'NoSuchKey') {
+      return res.status(404).json({
+        success: false,
+        error: 'Video not found'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate signed URL',
+      message: error.message
+    });
+  }
+});
 
 router.post('/videoMerge', protect, async (req, res) => {
   try {
