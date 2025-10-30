@@ -17,52 +17,56 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 4001;
-
 const payloadLimit = '50mb';
 
-app.set('trust proxy', true); 
-// Ensure uploads directory exists
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+app.set('trust proxy', true);
 
-// Serve static files from uploads directory
-// Serve static files from uploads directory
+// 🗂 Ensure uploads and temp directories exist
+const dirsToEnsure = [
+  path.join(__dirname, 'uploads'),
+  path.join(__dirname, 'backend/uploads'),
+  path.join(__dirname, 'backend/thumbnails'),
+  path.join(__dirname, 'temp')
+];
+dirsToEnsure.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    console.log(`Creating directory: ${dir}`);
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// 🖼 Serve static directories
 const staticConfig = {
   dotfiles: 'ignore',
   etag: true,
   extensions: ['jpg', 'jpeg', 'png', 'mp4'],
   maxAge: '1d',
-  setHeaders: (res, path) => {
+  setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
 };
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), staticConfig));
+app.use('/temp', express.static(path.join(__dirname, 'temp'), staticConfig));
+app.use('/thumbnails', express.static(path.join(__dirname, 'backend', 'thumbnails'), staticConfig));
+app.use('/default-thumbnail.jpg', express.static(path.join(__dirname, 'backend', 'public', 'default-thumbnail.jpg')));
 
-// Add this before your routes
-// app.use(express.json({ limit: '500mb' }));
-// app.use(express.urlencoded({ extended: true, limit: '500mb' }));
-
-// Configure CORS based on environment
+// ⚙️ Configure CORS
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = process.env.ALLOWED_ORIGINS 
-      ? process.env.ALLOWED_ORIGINS.split(',') 
+    if (!origin) return callback(null, true); // Allow mobile/curl requests
+
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',')
       : [
           'https://clip-frontend-git-main-niraj1412s-projects.vercel.app',
           'https://clip-frontend-three.vercel.app',
-          'http://localhost:3000', 
+          'http://localhost:3000',
           'http://127.0.0.1:3000'
         ];
 
-    // Remove any trailing slashes from origins
     const normalizedOrigins = allowedOrigins.map(o => o.replace(/\/$/, ''));
-    
+
     if (normalizedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
@@ -83,64 +87,63 @@ const corsOptions = {
     'Content-Length',
     'X-Request-ID'
   ],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 };
 
 app.use(cors(corsOptions));
 
+// 🧠 FIX: Allow Google OAuth popups and cross-origin communication
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
+
+// 🧰 Basic middleware
 app.use(express.json({
-    limit: payloadLimit,
-    extended: true,
-    parameterLimit: 50000
+  limit: payloadLimit,
+  extended: true,
+  parameterLimit: 50000
 }));
-
 app.use(express.urlencoded({
-    extended: true,
-    limit: payloadLimit,
-    parameterLimit: 50000
+  extended: true,
+  limit: payloadLimit,
+  parameterLimit: 50000
 }));
 
-// Add request logging middleware
+// 🌐 Preflight (OPTIONS) handling
+app.options('*', cors(corsOptions));
+
+// 🕓 Request logging middleware
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-const tempDir = path.join(__dirname, 'temp');
-if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-}
-
-app.options('*', cors(corsOptions));
-
-// Serve static files from the temp directory
-app.use('/temp', express.static(path.join(__dirname, 'temp'), staticConfig));
-
-// Add a route to check if a file exists
+// 🎥 File check route for merged videos
 app.head('/temp/:jobId/merged.mp4', (req, res) => {
-    const { jobId } = req.params;
-    const filePath = path.join(__dirname, 'temp', jobId, 'merged.mp4');
-
-    if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
-            res.setHeader('Content-Length', stats.size);
-            res.setHeader('Content-Type', 'video/mp4');
-            res.status(200).end();
-        } else {
-            res.status(404).end();
-        }
-    } else {
-        res.status(404).end();
+  const { jobId } = req.params;
+  const filePath = path.join(__dirname, 'temp', jobId, 'merged.mp4');
+  if (fs.existsSync(filePath)) {
+    const stats = fs.statSync(filePath);
+    if (stats.size > 0) {
+      res.setHeader('Content-Length', stats.size);
+      res.setHeader('Content-Type', 'video/mp4');
+      return res.status(200).end();
     }
+  }
+  res.status(404).end();
 });
 
-// Routes
+// 🩺 Health check route (important for frontend ping)
+app.get('/api/v1/health/ping', (req, res) => {
+  res.status(200).json({ status: true, message: 'Server online' });
+});
+
+// 📦 Routes
 app.use('/api/v1/auth', usersRoute);
 app.use('/api/clips', clipsRoute);
 app.use('/api/v1/upload', uploadRoute);
-
-// ✅ Ensure these come BEFORE the generic /api/v1
 app.use('/api/v1/youtube', initialVersionRoute);
 app.use('/api/v1/video', videoRoutes);
 app.use('/api/v1/url', initialVersionRoute);
@@ -148,48 +151,18 @@ app.use('/api/merge', mergeRoute);
 app.use('/api/projects', projectRoutes);
 app.use('/api/v1/health', healthRoute);
 app.use('/api', processRoute);
-// ✅ Catch-all /api/v1 AFTER specific routes
+
+// ✅ Catch-all for other /api/v1 routes
 app.use('/api/v1', (req, res, next) => {
   console.log(`Incoming API v1 request: ${req.method} ${req.path}`);
   next();
 }, processRoutes);
 
-
-// Add this near the start of the file after other requires
-const uploadsDir = path.join(__dirname, 'uploads');
-const backendUploadsDir = path.join(__dirname, 'backend/uploads');
-
-// Create all required directories
-[uploadsDir, backendUploadsDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    console.log(`Creating directory: ${dir}`);
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
-
-
-// Add this before your routes
-const thumbnailsDir = path.join(__dirname, 'backend', 'thumbnails');
-if (!fs.existsSync(thumbnailsDir)) {
-  fs.mkdirSync(thumbnailsDir, { recursive: true });
-}
-
-// Serve thumbnails from the correct directory
-app.use('/thumbnails', express.static(thumbnailsDir, {
-  maxAge: '1d',
-  setHeaders: (res, path) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-}));
-
-// Serve default thumbnail
-const publicDir = path.join(__dirname, 'backend', 'public');
-app.use('/default-thumbnail.jpg', express.static(path.join(publicDir, 'default-thumbnail.jpg')));
-
+// 🧱 Production fallback
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res, next) => {
     if (!req.path.startsWith('/api/')) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         message: 'Not found - Frontend is served separately',
         hint: 'Your frontend is deployed at a different URL'
       });
@@ -198,20 +171,18 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Global error handler
+// 🛠 Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error handler caught:', err.stack || err);
   
-  // Handle specific error types
   if (err.name === 'UnauthorizedError') {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
-  
+
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ message: 'File too large' });
   }
 
-  // Default error response
   res.status(err.status || 500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined,
@@ -219,14 +190,15 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to MongoDB and start server
+// 🧩 Connect to MongoDB
 connectDB();
 
-// Start the server - no need for .then as we handle connection errors separately
+// 🚀 Start the server
 app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+  console.log(`✅ Server running on port ${port}`);
 });
 
+// 🧾 Log registered routes
 console.log('Registered routes:');
 app._router.stack.forEach(middleware => {
   if (middleware.route) {
