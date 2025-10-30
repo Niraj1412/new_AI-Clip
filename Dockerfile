@@ -1,53 +1,56 @@
+# ---- Base Node Image ----
 FROM node:22
 
-# Install system dependencies including FFmpeg and python-is-python3
+# ---- Install System Dependencies ----
 RUN apt-get update && \
     apt-get install -y \
     python3 \
     python3-pip \
     python-is-python3 \
-    ffmpeg && \
+    ffmpeg \
+    wget && \
     python --version && \
     ffmpeg -version && \
     rm -rf /var/lib/apt/lists/*
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/backend/uploads && \
-    mkdir -p /app/uploads && \
-    mkdir -p /app/tmp && \
-    mkdir -p /app/output && \
-    chmod -R 777 /app/backend/uploads && \
-    chmod -R 777 /app/uploads && \
-    chmod -R 777 /app/tmp && \
-    chmod -R 777 /app/output
+# ---- Create App Directories ----
+RUN mkdir -p /app/backend/uploads /app/uploads /app/tmp /app/output && \
+    chmod -R 777 /app/backend/uploads /app/uploads /app/tmp /app/output
 
 WORKDIR /app
 
-# Copy package files
+# ---- Copy Package Files ----
 COPY package*.json ./
 
-# Add your GitHub token as a build arg (ensure it's securely provided at build time)
+# ---- Build Arguments ----
 ARG GITHUB_TOKEN
 
-# Configure npm with GitHub Token (conditionally handle npm registry)
+# ---- Environment Variables (Fixes youtube-dl-exec Build) ----
+# Prevent youtube-dl-exec from fetching binaries during install
+ENV YOUTUBE_DL_SKIP_DOWNLOAD=true
+# Optional: authenticate GitHub API requests if needed
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+
+# ---- Install Dependencies ----
 RUN echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > ~/.npmrc && \
     npm config set registry https://registry.npmjs.org/ && \
     npm install --no-optional --legacy-peer-deps && \
     rm -f ~/.npmrc && \
     npm cache clean --force
 
-# Copy application code
+# ---- Copy Source Code ----
 COPY . .
 
-# Set environment variables
+# ---- Set Environment Variables ----
 ENV NODE_ENV=production
 ENV UPLOADS_DIR=/app/backend/uploads
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV TEMP_DIR=/app/tmp
 ENV OUTPUT_DIR=/app/output
+ENV PORT=4001
 
-# Expose the necessary port
+# ---- Expose Port ----
 EXPOSE 4001
 
-# Start the application
+# ---- Start App ----
 CMD ["npm", "start"]
